@@ -27,7 +27,7 @@ class ClipboardSyncManager @Inject constructor(
         private const val SYNC_DEBOUNCE_MS = 1000L
     }
     
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isInitialized = false
     private var currentDeviceId: String? = null
     private var connectionJob: Job? = null
@@ -49,12 +49,29 @@ class ClipboardSyncManager @Inject constructor(
     }
     
     /**
+     * Check if manager is in a usable state
+     */
+    private fun isUsable(): Boolean {
+        return isInitialized && scope.isActive
+    }
+    
+    /**
      * Initialize the sync manager
      */
     suspend fun initialize() {
-        if (isInitialized) return
+        if (isUsable()) {
+            Log.d(TAG, "ClipboardSyncManager already initialized and usable")
+            return
+        }
         
         try {
+            // Always recreate scope to ensure it's fresh
+            if (isInitialized || !scope.isActive) {
+                Log.d(TAG, "Recreating scope for fresh initialization")
+                scope.cancel() // Cancel any existing scope
+                scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+            }
+            
             // Start observing connection status immediately
             startObservingConnectionStatus()
             
@@ -89,16 +106,19 @@ class ClipboardSyncManager @Inject constructor(
      * Start observing WebSocket connection status
      */
     private fun startObservingConnectionStatus() {
-        // Only start if not already observing
-        if (connectionJob?.isActive == true) {
-            Log.d(TAG, "Connection status observer already active")
-            return
-        }
+        // Cancel existing observer first
+        connectionJob?.cancel()
         
         connectionJob = scope.launch {
             Log.d(TAG, "Starting to observe WebSocket connection status")
             try {
                 webSocketClient.connectionStatus.collect { status ->
+                    // Check if we're still active before processing
+                    if (!isActive) {
+                        Log.d(TAG, "Observer cancelled, stopping status collection")
+                        return@collect
+                    }
+                    
                     Log.d(TAG, "=== WebSocket Status Update ===")
                     Log.d(TAG, "WebSocket status changed to: $status")
                     Log.d(TAG, "Current sync status: ${_syncStatus.value}")
@@ -114,6 +134,9 @@ class ClipboardSyncManager @Inject constructor(
                     Log.d(TAG, "Sync status updated to: ${_syncStatus.value}")
                     Log.d(TAG, "=== Status Update Complete ===")
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d(TAG, "Connection status observer cancelled normally")
+                // Don't log cancellation as error - it's expected during cleanup
             } catch (e: Exception) {
                 Log.e(TAG, "Error in connection status observer", e)
             }
@@ -156,13 +179,26 @@ class ClipboardSyncManager @Inject constructor(
     private fun observeWebSocketUpdates() {
         Log.d(TAG, "Setting up WebSocket updates observer")
         scope.launch {
-            Log.d(TAG, "Starting to collect clipboard updates from WebSocket flow")
-            webSocketClient.clipboardUpdates
-                .debounce(SYNC_DEBOUNCE_MS) // Prevent rapid updates
-                .collect { clipboardItem ->
-                    Log.d(TAG, "Received clipboard item from flow: $clipboardItem")
-                    handleIncomingClipboardUpdate(clipboardItem)
-                }
+            try {
+                Log.d(TAG, "Starting to collect clipboard updates from WebSocket flow")
+                webSocketClient.clipboardUpdates
+                    .debounce(SYNC_DEBOUNCE_MS) // Prevent rapid updates
+                    .collect { clipboardItem ->
+                        // Check if we're still active before processing
+                        if (!isActive) {
+                            Log.d(TAG, "WebSocket updates observer cancelled, stopping collection")
+                            return@collect
+                        }
+                        
+                        Log.d(TAG, "Received clipboard item from flow: $clipboardItem")
+                        handleIncomingClipboardUpdate(clipboardItem)
+                    }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d(TAG, "WebSocket updates observer cancelled normally")
+                // Don't log cancellation as error - it's expected during cleanup
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in WebSocket updates observer", e)
+            }
         }
     }
     
@@ -373,11 +409,24 @@ class ClipboardSyncManager @Inject constructor(
      * Reconnect WebSocket if needed
      */
     suspend fun reconnectIfNeeded() {
+        Log.d(TAG, "Reconnect requested - current status: ${_syncStatus.value}, usable: ${isUsable()}")
+        
+        // If manager is not usable, reinitialize first
+        if (!isUsable()) {
+            Log.d(TAG, "Manager not usable, reinitializing...")
+            initialize()
+        }
+        
         if (_syncStatus.value == SyncStatus.DISCONNECTED || _syncStatus.value == SyncStatus.ERROR) {
             val accessToken = getAccessToken()
             if (accessToken != null && currentDeviceId != null) {
+                Log.d(TAG, "Starting WebSocket connection for reconnect")
                 startWebSocketConnection(accessToken, currentDeviceId!!)
+            } else {
+                Log.w(TAG, "Cannot reconnect - missing token or device ID")
             }
+        } else {
+            Log.d(TAG, "Reconnect not needed - already connected or connecting")
         }
     }
     
@@ -393,11 +442,34 @@ class ClipboardSyncManager @Inject constructor(
      * Cleanup resources
      */
     fun cleanup() {
-        disconnect()
+        Log.d(TAG, "Cleaning up ClipboardSyncManager")
+        
+        // Cancel jobs first to stop observers
         connectionJob?.cancel()
+        connectionJob = null
+        
+        // Then disconnect WebSocket
+        disconnect()
+        
+        // Clean up WebSocket client
         webSocketClient.cleanup()
+        
+        // Cancel scope last
         scope.cancel()
+        
+        // Reset state
         isInitialized = false
+        
+        Log.d(TAG, "ClipboardSyncManager cleanup complete")
+    }
+    
+    /**
+     * Soft disconnect - disconnect WebSocket but keep manager ready for reconnection
+     */
+    fun softDisconnect() {
+        Log.d(TAG, "Soft disconnect - keeping manager initialized")
+        webSocketClient.disconnect()
+        _syncStatus.value = SyncStatus.DISCONNECTED
     }
     
     /**

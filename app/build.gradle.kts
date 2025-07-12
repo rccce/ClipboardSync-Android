@@ -45,6 +45,7 @@ dependencies {
     // Core Android
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation("androidx.lifecycle:lifecycle-process:2.7.0")
     implementation(libs.androidx.activity.compose)
     
     // Compose

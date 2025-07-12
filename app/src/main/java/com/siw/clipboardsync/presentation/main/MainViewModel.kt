@@ -153,6 +153,28 @@ class MainViewModel @Inject constructor(
         checkServiceStatus()
     }
     
+    fun refreshServiceStatus() {
+        viewModelScope.launch {
+            android.util.Log.d("MainViewModel", "Refreshing service status...")
+            val isRunning = serviceManager.isClipboardServiceRunning()
+            val hasPermissions = serviceManager.hasRequiredPermissions()
+            
+            android.util.Log.d("MainViewModel", "Service running: $isRunning, Has permissions: $hasPermissions")
+            
+            _uiState.value = _uiState.value.copy(
+                isServiceRunning = isRunning,
+                hasRequiredPermissions = hasPermissions,
+                missingPermissions = serviceManager.getMissingPermissions()
+            )
+            
+            // If service is not running but we think it should be, try to restart
+            if (!isRunning && _uiState.value.syncStatus != ClipboardSyncManager.SyncStatus.DISCONNECTED) {
+                android.util.Log.d("MainViewModel", "Service not running but sync status is not DISCONNECTED, updating status")
+                // The ClipboardSyncManager should handle this, but let's make sure UI is consistent
+            }
+        }
+    }
+    
     private fun initializeAndObserveClipboardSync() {
         // Initialize ClipboardSyncManager and start observing
         viewModelScope.launch {
@@ -243,9 +265,9 @@ class MainViewModel @Inject constructor(
         // This replaces the need for separate start/stop controls
         if (_uiState.value.syncStatus == ClipboardSyncManager.SyncStatus.CONNECTED || 
             _uiState.value.syncStatus == ClipboardSyncManager.SyncStatus.CONNECTING) {
-            // Disconnect WebSocket but keep service running for local clipboard monitoring
+            // Soft disconnect WebSocket but keep manager ready for reconnection
             viewModelScope.launch {
-                clipboardSyncManager.disconnect()
+                clipboardSyncManager.softDisconnect()
             }
         } else {
             // Connect WebSocket - service should already be running

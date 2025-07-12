@@ -42,6 +42,12 @@ fun MainScreen(
         }
     }
     
+    // Refresh service status when returning to the app
+    LaunchedEffect(uiState.syncStatus) {
+        // When sync status changes, refresh the service status to keep UI in sync
+        viewModel.refreshServiceStatus()
+    }
+    
     Column(
         modifier = Modifier
             .fillMaxSize()
