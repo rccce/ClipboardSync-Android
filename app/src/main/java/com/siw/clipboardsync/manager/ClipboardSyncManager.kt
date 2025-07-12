@@ -89,20 +89,33 @@ class ClipboardSyncManager @Inject constructor(
      * Start observing WebSocket connection status
      */
     private fun startObservingConnectionStatus() {
-        connectionJob?.cancel() // Cancel any existing connection job
+        // Only start if not already observing
+        if (connectionJob?.isActive == true) {
+            Log.d(TAG, "Connection status observer already active")
+            return
+        }
+        
         connectionJob = scope.launch {
             Log.d(TAG, "Starting to observe WebSocket connection status")
-            webSocketClient.connectionStatus.collect { status ->
-                Log.d(TAG, "WebSocket status changed to: $status")
-                val newSyncStatus = when (status) {
-                    WebSocketClient.ConnectionStatus.CONNECTING -> SyncStatus.CONNECTING
-                    WebSocketClient.ConnectionStatus.CONNECTED -> SyncStatus.CONNECTED
-                    WebSocketClient.ConnectionStatus.DISCONNECTED -> SyncStatus.DISCONNECTED
-                    WebSocketClient.ConnectionStatus.RECONNECTING -> SyncStatus.CONNECTING
-                    WebSocketClient.ConnectionStatus.FAILED -> SyncStatus.ERROR
+            try {
+                webSocketClient.connectionStatus.collect { status ->
+                    Log.d(TAG, "=== WebSocket Status Update ===")
+                    Log.d(TAG, "WebSocket status changed to: $status")
+                    Log.d(TAG, "Current sync status: ${_syncStatus.value}")
+                    val newSyncStatus = when (status) {
+                        WebSocketClient.ConnectionStatus.CONNECTING -> SyncStatus.CONNECTING
+                        WebSocketClient.ConnectionStatus.CONNECTED -> SyncStatus.CONNECTED
+                        WebSocketClient.ConnectionStatus.DISCONNECTED -> SyncStatus.DISCONNECTED
+                        WebSocketClient.ConnectionStatus.RECONNECTING -> SyncStatus.CONNECTING
+                        WebSocketClient.ConnectionStatus.FAILED -> SyncStatus.ERROR
+                    }
+                    Log.d(TAG, "Mapping to sync status: $newSyncStatus")
+                    _syncStatus.value = newSyncStatus
+                    Log.d(TAG, "Sync status updated to: ${_syncStatus.value}")
+                    Log.d(TAG, "=== Status Update Complete ===")
                 }
-                Log.d(TAG, "Updating sync status from ${_syncStatus.value} to $newSyncStatus")
-                _syncStatus.value = newSyncStatus
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in connection status observer", e)
             }
         }
     }
@@ -111,13 +124,11 @@ class ClipboardSyncManager @Inject constructor(
      * Start WebSocket connection
      */
     private fun startWebSocketConnection(accessToken: String, deviceId: String) {
-        // Cancel any existing connection job
-        connectionJob?.cancel()
-        
-        connectionJob = scope.launch {
+        scope.launch {
             try {
                 Log.d(TAG, "Starting WebSocket connection for device: $deviceId")
-                _syncStatus.value = SyncStatus.CONNECTING
+                // Don't manually set CONNECTING status here - let the WebSocket observer handle it
+                // _syncStatus.value = SyncStatus.CONNECTING
                 
                 // Get user ID from auth repository
                 val currentUser = authRepository.getCurrentUser()
@@ -127,8 +138,9 @@ class ClipboardSyncManager @Inject constructor(
                     return@launch
                 }
                 
-                // Connect to WebSocket
+                // Connect to WebSocket - the connection status observer will handle status updates
                 webSocketClient.connect(accessToken, currentUser.id, deviceId)
+                Log.d(TAG, "WebSocket connect() called, waiting for status updates from observer")
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start WebSocket connection", e)

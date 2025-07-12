@@ -32,7 +32,8 @@ class MainViewModel @Inject constructor(
     init {
         loadInitialData()
         checkServiceStatus()
-        observeClipboardSync()
+        // Initialize ClipboardSyncManager first, then start observing
+        initializeAndObserveClipboardSync()
         autoStartClipboardSync()
         // Auto-start WebSocket connection when app starts
         autoStartWebSocketConnection()
@@ -152,18 +153,33 @@ class MainViewModel @Inject constructor(
         checkServiceStatus()
     }
     
-    private fun observeClipboardSync() {
+    private fun initializeAndObserveClipboardSync() {
+        // Initialize ClipboardSyncManager and start observing
         viewModelScope.launch {
-            // Observe sync status
+            android.util.Log.d("MainViewModel", "Initializing ClipboardSyncManager...")
+            clipboardSyncManager.initialize()
+            android.util.Log.d("MainViewModel", "ClipboardSyncManager initialized, starting observation...")
+        }
+        observeClipboardSync()
+    }
+    
+    private fun observeClipboardSync() {
+        // Observe sync status
+        viewModelScope.launch {
             clipboardSyncManager.syncStatus.collect { status ->
+                android.util.Log.d("MainViewModel", "=== UI Status Update ===")
+                android.util.Log.d("MainViewModel", "Received sync status: $status")
+                android.util.Log.d("MainViewModel", "Current UI status: ${_uiState.value.syncStatus}")
                 _uiState.value = _uiState.value.copy(
                     syncStatus = status
                 )
+                android.util.Log.d("MainViewModel", "Updated UI status to: ${_uiState.value.syncStatus}")
+                android.util.Log.d("MainViewModel", "=== UI Update Complete ===")
             }
         }
         
+        // Observe last synced item - separate coroutine
         viewModelScope.launch {
-            // Observe last synced item
             clipboardSyncManager.lastSyncedItem.collect { item ->
                 item?.let {
                     _uiState.value = _uiState.value.copy(
