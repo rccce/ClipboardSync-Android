@@ -24,7 +24,8 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
-    viewModel: MainViewModel = hiltViewModel()
+    viewModel: MainViewModel = hiltViewModel(),
+    onNavigateToStatus: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     
@@ -53,12 +54,29 @@ fun MainScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Header
-        Text(
-            text = "ClipboardSync",
-            style = MaterialTheme.typography.headlineLarge,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
+        // Header with Status Button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "ClipboardSync",
+                style = MaterialTheme.typography.headlineLarge,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            
+            IconButton(
+                onClick = onNavigateToStatus,
+                modifier = Modifier.padding(bottom = 8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Status & Settings",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
         
         // Unified Clipboard Sync Card
         UnifiedClipboardSyncCard(

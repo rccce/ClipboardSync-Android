@@ -48,6 +48,10 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-process:2.7.0")
     implementation(libs.androidx.activity.compose)
     
+    // Xposed/LSPosed support
+    compileOnly("de.robv.android.xposed:api:82")
+    compileOnly("de.robv.android.xposed:api:82:sources")
+    
     // Compose
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)

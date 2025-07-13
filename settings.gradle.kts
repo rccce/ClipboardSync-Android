@@ -9,6 +9,10 @@ pluginManagement {
         }
         mavenCentral()
         gradlePluginPortal()
+        //add custom maven repository
+        maven {
+            url = uri("https://api.xposed.info/")
+        }
     }
 }
 dependencyResolutionManagement {
@@ -16,6 +20,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven {
+            url = uri("https://api.xposed.info/")
+        }
     }
 }
 
