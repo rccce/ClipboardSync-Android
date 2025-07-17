@@ -35,39 +35,17 @@ object RootUtils {
         }
     }
     
-    /**
-     * Check if LSPosed framework is available
-     */
-    suspend fun isLSPosedAvailable(): Boolean = withContext(Dispatchers.IO) {
-        return@withContext LSPosedUtils.isLSPosedActive()
-    }
-    
-    /**
-     * Check if our Xposed module is active
-     */
-    suspend fun isXposedModuleActive(): Boolean = withContext(Dispatchers.IO) {
-        return@withContext LSPosedUtils.isModuleActive()
-    }
     
     /**
      * Get enhanced clipboard monitoring capabilities based on root status
      */
     suspend fun getClipboardCapabilities(): ClipboardCapabilities = withContext(Dispatchers.IO) {
         val isRooted = isRooted()
-        val hasLSPosed = if (isRooted) isLSPosedAvailable() else false
-        val moduleActive = if (hasLSPosed) isXposedModuleActive() else false
         
         ClipboardCapabilities(
             isRooted = isRooted,
-            hasLSPosed = hasLSPosed,
-            moduleActive = moduleActive,
             canBypassAndroid10Restrictions = isRooted,
-            supportsRealTimeMonitoring = moduleActive,
-            recommendedPollingInterval = when {
-                moduleActive -> 0L // No polling needed
-                isRooted -> 1000L // Faster polling for rooted devices
-                else -> 5000L // Standard polling for non-rooted
-            }
+            recommendedPollingInterval = if (isRooted) 1000L else 5000L // Faster polling for rooted devices
         )
     }
     
@@ -191,29 +169,24 @@ object RootUtils {
      */
     data class ClipboardCapabilities(
         val isRooted: Boolean,
-        val hasLSPosed: Boolean,
-        val moduleActive: Boolean,
         val canBypassAndroid10Restrictions: Boolean,
-        val supportsRealTimeMonitoring: Boolean,
         val recommendedPollingInterval: Long
     ) {
-        fun getDescription(): String = when {
-            moduleActive -> "Enhanced (LSPosed Hook Active)"
-            hasLSPosed -> "Enhanced (LSPosed Available)"
-            isRooted -> "Enhanced (Root Access)"
-            else -> "Standard (Non-rooted)"
+        fun getDescription(): String = if (isRooted) {
+            "Enhanced (Root Access)"
+        } else {
+            "Standard (Non-rooted)"
         }
         
-        fun getOptimizationLevel(): OptimizationLevel = when {
-            moduleActive -> OptimizationLevel.MAXIMUM
-            isRooted -> OptimizationLevel.HIGH
-            else -> OptimizationLevel.STANDARD
+        fun getOptimizationLevel(): OptimizationLevel = if (isRooted) {
+            OptimizationLevel.HIGH
+        } else {
+            OptimizationLevel.STANDARD
         }
     }
     
     enum class OptimizationLevel {
         STANDARD,   // Non-rooted devices
-        HIGH,       // Rooted but no LSPosed
-        MAXIMUM     // Rooted with LSPosed hook active
+        HIGH        // Rooted devices
     }
 }

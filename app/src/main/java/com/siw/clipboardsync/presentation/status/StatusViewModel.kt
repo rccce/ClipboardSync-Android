@@ -2,7 +2,6 @@ package com.siw.clipboardsync.presentation.status
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.siw.clipboardsync.utils.LSPosedUtils
 import com.siw.clipboardsync.utils.RootUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,19 +28,9 @@ class StatusViewModel @Inject constructor() : ViewModel() {
                 // Get device capabilities
                 val capabilities = RootUtils.getClipboardCapabilities()
                 
-                // Get LSPosed version if available
-                val lsposedVersion = if (capabilities.hasLSPosed) {
-                    LSPosedUtils.getLSPosedVersion()
-                } else null
-                
-                // Get LSPosed configuration
-                val lsposedConfig = LSPosedUtils.getRecommendedConfiguration()
-                
                 _statusState.value = StatusState(
                     isLoading = false,
                     capabilities = capabilities,
-                    lsposedVersion = lsposedVersion,
-                    lsposedConfig = lsposedConfig,
                     lastRefresh = System.currentTimeMillis()
                 )
                 
@@ -65,28 +54,14 @@ class StatusViewModel @Inject constructor() : ViewModel() {
                 // Get device capabilities with debug
                 val capabilities = RootUtils.getClipboardCapabilities()
                 
-                // Force LSPosed detection with debug
-                val lsposedActive = LSPosedUtils.isLSPosedActive()
-                val moduleActive = LSPosedUtils.isModuleActive()
-                
                 android.util.Log.d("StatusViewModel", "Force check results:")
-                android.util.Log.d("StatusViewModel", "- LSPosed Active: $lsposedActive")
-                android.util.Log.d("StatusViewModel", "- Module Active: $moduleActive")
+                android.util.Log.d("StatusViewModel", "- Root Access: ${capabilities.isRooted}")
                 android.util.Log.d("StatusViewModel", "- Capabilities: ${capabilities.getDescription()}")
-                
-                // Get LSPosed version if available
-                val lsposedVersion = if (capabilities.hasLSPosed) {
-                    LSPosedUtils.getLSPosedVersion()
-                } else null
-                
-                // Get LSPosed configuration
-                val lsposedConfig = LSPosedUtils.getRecommendedConfiguration()
+                android.util.Log.d("StatusViewModel", "- Polling Interval: ${capabilities.recommendedPollingInterval}ms")
                 
                 _statusState.value = StatusState(
                     isLoading = false,
                     capabilities = capabilities,
-                    lsposedVersion = lsposedVersion,
-                    lsposedConfig = lsposedConfig,
                     lastRefresh = System.currentTimeMillis()
                 )
                 
@@ -103,8 +78,6 @@ class StatusViewModel @Inject constructor() : ViewModel() {
     data class StatusState(
         val isLoading: Boolean = false,
         val capabilities: RootUtils.ClipboardCapabilities? = null,
-        val lsposedVersion: String? = null,
-        val lsposedConfig: LSPosedUtils.LSPosedConfiguration? = null,
         val lastRefresh: Long = 0L,
         val error: String? = null
     )

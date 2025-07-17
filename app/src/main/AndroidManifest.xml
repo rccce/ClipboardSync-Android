@@ -28,17 +28,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ClipboardSync"
         tools:targetApi="31">
-        
-        <!-- Xposed Module Metadata -->
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="Enhanced clipboard monitoring for ClipboardSync with real-time detection" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="82" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -65,15 +54,6 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
             
-        <!-- Clipboard Hook Receiver -->
-        <receiver
-            android:name=".receiver.ClipboardHookReceiver"
-            android:enabled="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.siw.clipboardsync.CLIPBOARD_CHANGED" />
-            </intent-filter>
-        </receiver>
         
         <!-- Boot receiver for auto-start -->
         <receiver

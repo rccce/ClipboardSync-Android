@@ -15,7 +15,6 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.siw.clipboardsync.R
 import com.siw.clipboardsync.data.repository.ClipboardRepository
 import com.siw.clipboardsync.manager.ClipboardSyncManager
-import com.siw.clipboardsync.receiver.ClipboardHookReceiver
 import com.siw.clipboardsync.utils.ClipboardUtils
 import com.siw.clipboardsync.utils.DeviceUtils
 import com.siw.clipboardsync.utils.RootUtils
@@ -52,7 +51,6 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
     
     // Enhanced monitoring state
     private var clipboardCapabilities: RootUtils.ClipboardCapabilities? = null
-    private var hookReceiver: ClipboardHookReceiver? = null
     private var rootMonitoringProcess: Process? = null
     private var monitoringJob: Job? = null
     
@@ -150,10 +148,7 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
             
             Log.i(TAG, "=== DEVICE CAPABILITIES DETECTED ===")
             Log.i(TAG, "Root Access: ${caps.isRooted}")
-            Log.i(TAG, "LSPosed Available: ${caps.hasLSPosed}")
-            Log.i(TAG, "Xposed Module Active: ${caps.moduleActive}")
             Log.i(TAG, "Can Bypass Android 10+ Restrictions: ${caps.canBypassAndroid10Restrictions}")
-            Log.i(TAG, "Supports Real-time Monitoring: ${caps.supportsRealTimeMonitoring}")
             Log.i(TAG, "Optimization Level: ${caps.getOptimizationLevel()}")
             Log.i(TAG, "Description: ${caps.getDescription()}")
             Log.i(TAG, "Recommended Polling Interval: ${caps.recommendedPollingInterval}ms")
@@ -167,10 +162,7 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
             // Fallback to standard monitoring
             clipboardCapabilities = RootUtils.ClipboardCapabilities(
                 isRooted = false,
-                hasLSPosed = false,
-                moduleActive = false,
                 canBypassAndroid10Restrictions = false,
-                supportsRealTimeMonitoring = false,
                 recommendedPollingInterval = 5000L
             )
         }
@@ -181,10 +173,6 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
      */
     private suspend fun configureMonitoringStrategy(capabilities: RootUtils.ClipboardCapabilities) {
         when (capabilities.getOptimizationLevel()) {
-            RootUtils.OptimizationLevel.MAXIMUM -> {
-                Log.i(TAG, "Configuring MAXIMUM optimization (LSPosed Hook)")
-                setupLSPosedHookMonitoring()
-            }
             RootUtils.OptimizationLevel.HIGH -> {
                 Log.i(TAG, "Configuring HIGH optimization (Root Access)")
                 setupRootOptimizedMonitoring()
@@ -196,21 +184,6 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
         }
     }
     
-    /**
-     * Setup LSPosed hook-based monitoring (best performance)
-     */
-    private fun setupLSPosedHookMonitoring() {
-        try {
-            // Register broadcast receiver for hook events
-            hookReceiver = ClipboardHookReceiver()
-            ClipboardHookReceiver.register(this, hookReceiver!!, clipboardSyncManager)
-            
-            Log.i(TAG, "LSPosed hook monitoring configured successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to setup LSPosed hook monitoring, falling back", e)
-            setupRootOptimizedMonitoring()
-        }
-    }
     
     /**
      * Setup root-optimized monitoring (good performance)
@@ -270,13 +243,12 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
                 
                 // Start appropriate monitoring based on capabilities
                 val caps = clipboardCapabilities
-                if (caps?.supportsRealTimeMonitoring == true) {
-                    Log.i(TAG, "Using real-time monitoring (no polling required)")
-                    updateNotification("Enhanced monitoring active (Real-time)")
+                Log.i(TAG, "Starting adaptive polling monitoring")
+                startAdaptivePolling()
+                if (caps?.isRooted == true) {
+                    updateNotification("Enhanced monitoring active (Root)")
                 } else {
-                    Log.i(TAG, "Starting adaptive polling monitoring")
-                    startAdaptivePolling()
-                    updateNotification("Enhanced monitoring active (Polling)")
+                    updateNotification("Standard monitoring active")
                 }
                 
             } catch (e: Exception) {
@@ -297,11 +269,6 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
         monitoringJob?.cancel()
         monitoringJob = null
         
-        // Cleanup hook receiver
-        hookReceiver?.let {
-            ClipboardHookReceiver.unregister(this, it)
-            hookReceiver = null
-        }
         
         // Cleanup root monitoring
         rootMonitoringProcess?.destroy()
@@ -344,9 +311,6 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
     private fun getAdaptivePollingInterval(): Long {
         val caps = clipboardCapabilities
         return when {
-            // Real-time monitoring available - no polling needed
-            caps?.supportsRealTimeMonitoring == true -> Long.MAX_VALUE
-            
             // Foreground with root access
             isAppInForeground && caps?.isRooted == true -> 500L
             
@@ -516,7 +480,6 @@ class EnhancedClipboardMonitorService : Service(), DefaultLifecycleObserver {
         isMonitoring = false
         
         monitoringJob?.cancel()
-        hookReceiver?.let { ClipboardHookReceiver.unregister(this, it) }
         rootMonitoringProcess?.destroy()
         clipboardSyncManager.cleanup()
         serviceScope.cancel()

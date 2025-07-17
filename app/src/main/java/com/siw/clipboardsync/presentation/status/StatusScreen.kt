@@ -25,7 +25,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.siw.clipboardsync.utils.LSPosedUtils
 import com.siw.clipboardsync.utils.RootUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -106,49 +105,24 @@ private fun StatusContent(
         
         Spacer(modifier = Modifier.height(12.dp))
         
-        // LSPosed Framework Status
+        // Monitoring Mode Status
         StatusCard(
-            title = "LSPosed Framework",
-            status = statusState.capabilities?.hasLSPosed ?: false,
+            title = "Monitoring Mode",
+            status = statusState.capabilities?.isRooted ?: false,
             isLoading = statusState.isLoading,
-            icon = Icons.Default.Build,
-            description = when {
-                statusState.capabilities?.hasLSPosed == true -> 
-                    "LSPosed framework is installed and active"
-                statusState.capabilities?.isRooted == true -> 
-                    "LSPosed not detected - install LSPosed for optimal performance"
-                else -> 
-                    "LSPosed requires root access"
-            },
-            additionalInfo = statusState.lsposedVersion?.let { "Version: $it" }
-        )
-        
-        Spacer(modifier = Modifier.height(12.dp))
-        
-        // Module Status
-        StatusCard(
-            title = "Module Status",
-            status = statusState.capabilities?.moduleActive ?: false,
-            isLoading = statusState.isLoading,
-            icon = Icons.Default.CheckCircle,
-            description = when {
-                statusState.capabilities?.moduleActive == true -> 
-                    "Module is working - real-time monitoring active"
-                statusState.capabilities?.hasLSPosed == true -> 
-                    "Module not enabled - configure in LSPosed Manager"
-                statusState.capabilities?.isRooted == true -> 
-                    "LSPosed required for module functionality"
-                else -> 
-                    "Root access required for enhanced monitoring"
-            },
-            isWarning = statusState.capabilities?.hasLSPosed == true && statusState.capabilities?.moduleActive == false
+            icon = Icons.Default.Settings,
+            description = if (statusState.capabilities?.isRooted == true) 
+                "Enhanced mode - faster polling and better background access" 
+            else 
+                "Standard mode - basic clipboard monitoring",
+            additionalInfo = "Polling interval: ${statusState.capabilities?.recommendedPollingInterval ?: "Unknown"}ms"
         )
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Configuration Guide - Show when LSPosed is available but module is not active
-        if (statusState.capabilities?.hasLSPosed == true && statusState.capabilities?.moduleActive == false) {
-            ConfigurationGuideCard()
+        // Root Information Card - Show when device is not rooted
+        if (statusState.capabilities?.isRooted == false) {
+            RootInformationCard()
             Spacer(modifier = Modifier.height(16.dp))
         }
         
@@ -286,6 +260,70 @@ private fun StatusCard(
 }
 
 @Composable
+private fun RootInformationCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Enhanced Monitoring",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Text(
+                text = "For enhanced clipboard monitoring with faster polling and better background access, root access is required.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = "Benefits of root access:",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            
+            val benefits = listOf(
+                "• Faster clipboard polling (1s vs 5s)",
+                "• Better background access",
+                "• Bypasses Android 10+ restrictions",
+                "• More reliable synchronization"
+            )
+            
+            benefits.forEach { benefit ->
+                Text(
+                    text = benefit,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun ConfigurationGuideCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -377,10 +415,8 @@ private fun DebugInfoCard(capabilities: RootUtils.ClipboardCapabilities) {
             
             val debugInfo = listOf(
                 "Root Access" to capabilities.isRooted.toString(),
-                "LSPosed Available" to capabilities.hasLSPosed.toString(),
-                "Module Active" to capabilities.moduleActive.toString(),
                 "Optimization Level" to capabilities.getOptimizationLevel().name,
-                "Real-time Monitoring" to capabilities.supportsRealTimeMonitoring.toString(),
+                "Background Access" to capabilities.canBypassAndroid10Restrictions.toString(),
                 "Polling Interval" to "${capabilities.recommendedPollingInterval}ms"
             )
             
@@ -447,12 +483,6 @@ private fun PerformanceInfoCard(capabilities: RootUtils.ClipboardCapabilities?) 
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 val performanceDetails = when (caps.getOptimizationLevel()) {
-                    RootUtils.OptimizationLevel.MAXIMUM -> listOf(
-                        "• Instant clipboard detection (< 100ms)",
-                        "• Minimal battery usage",
-                        "• Real-time synchronization",
-                        "• Works in background"
-                    )
                     RootUtils.OptimizationLevel.HIGH -> listOf(
                         "• Fast clipboard detection (< 1s)",
                         "• Low battery usage",
