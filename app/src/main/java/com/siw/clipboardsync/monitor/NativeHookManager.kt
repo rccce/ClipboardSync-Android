@@ -3,6 +3,7 @@ package com.siw.clipboardsync.monitor
 import android.content.Context
 import android.util.Log
 import com.siw.clipboardsync.monitor.model.ClipboardContent
+import com.siw.clipboardsync.service.RootDetectionService
 import kotlinx.coroutines.*
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -14,7 +15,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class NativeHookManager @Inject constructor(
-    private val context: Context
+    private val context: Context,
+    private val rootDetectionService: RootDetectionService
 ) {
     
     companion object {
@@ -33,7 +35,7 @@ class NativeHookManager @Inject constructor(
     /**
      * Checks if native hooks are available on this device.
      */
-    fun isAvailable(): Boolean {
+    suspend fun isAvailable(): Boolean {
         return try {
             // First try the standard native library approach
             val hook = getNativeHook()
@@ -44,17 +46,14 @@ class NativeHookManager @Inject constructor(
                 return true
             }
             
-            // For KernelSU devices where native library loading fails due to security restrictions,
-            // we'll use a different approach - check if we have root access for system-level operations
-            val rootProcess = Runtime.getRuntime().exec("su -c 'id'")
-            val exitCode = rootProcess.waitFor()
-            val output = rootProcess.inputStream.bufferedReader().readText().trim()
-            rootProcess.destroy()
+            // Use RootDetectionService to check for root capabilities
+            val rootCapabilities = rootDetectionService.getRootCapabilities()
+            val hasNativeAccess = rootCapabilities.hasNativeAccess
             
-            val rootAvailable = exitCode == 0 && output.contains("uid=0(root)")
-            Log.d(TAG, "Native hooks availability via root access: $rootAvailable")
+            Log.d(TAG, "Native hooks availability via root access: $hasNativeAccess")
+            Log.d(TAG, "Root method: ${rootCapabilities.rootMethod}, Root accessible: ${rootCapabilities.isRootAccessible}")
             
-            if (rootAvailable) {
+            if (hasNativeAccess) {
                 Log.i(TAG, "Native library not available, but root access detected - enabling alternative system hooks")
                 return true
             }
@@ -87,19 +86,15 @@ class NativeHookManager @Inject constructor(
                 Log.w(TAG, "Native library not available")
             }
             
-            // For KernelSU devices, use alternative initialization
-            val rootProcess = Runtime.getRuntime().exec("su -c 'id'")
-            val exitCode = rootProcess.waitFor()
-            val output = rootProcess.inputStream.bufferedReader().readText().trim()
-            rootProcess.destroy()
-            
-            if (exitCode == 0 && output.contains("uid=0(root)")) {
+            // Use RootDetectionService to check for alternative initialization
+            val rootCapabilities = rootDetectionService.getRootCapabilities()
+            if (rootCapabilities.hasNativeAccess) {
                 isInitialized = true
-                Log.i(TAG, "Alternative system hooks initialized successfully for KernelSU device")
+                Log.i(TAG, "Alternative system hooks initialized successfully for ${rootCapabilities.rootMethod} device")
                 return true
             }
             
-            Log.e(TAG, "Failed to initialize any hook system")
+            Log.e(TAG, "Failed to initialize any hook system - no native access available")
             false
         } catch (e: Exception) {
             Log.e(TAG, "Exception during hook initialization", e)
@@ -111,7 +106,7 @@ class NativeHookManager @Inject constructor(
      * Registers a callback for clipboard change events.
      * @param callback function to call when clipboard changes
      */
-    fun registerClipboardCallback(callback: (String) -> Unit) {
+    suspend fun registerClipboardCallback(callback: (String) -> Unit) {
         try {
             if (!isAvailable()) {
                 Log.w(TAG, "Native hooks not available, cannot register callback")

@@ -44,13 +44,14 @@ class SystemLevelClipboardMonitor @Inject constructor(
             val rootCapabilities = rootDetectionService.getRootCapabilities()
             Log.d(TAG, "=== SystemLevelClipboardMonitor startMonitoring ===")
             Log.d(TAG, "Root capabilities: hasSystemHooks=${rootCapabilities.hasSystemHooks}, hasXposedFramework=${rootCapabilities.hasXposedFramework}")
-            Log.d(TAG, "Native hook manager available: ${nativeHookManager.isAvailable()}")
-            Log.d(TAG, "Xposed hook manager available: ${xposedHookManager.isAvailable()}")
             
             // Check if we have any system-level access method available
             val hasNativeHooks = nativeHookManager.isAvailable()
             val hasXposedHooks = xposedHookManager.isAvailable()
             val hasSystemHooks = rootCapabilities.hasSystemHooks
+            
+            Log.d(TAG, "Native hook manager available: $hasNativeHooks")
+            Log.d(TAG, "Xposed hook manager available: $hasXposedHooks")
             
             Log.d(TAG, "System-level access check: nativeHooks=$hasNativeHooks, xposedHooks=$hasXposedHooks, systemHooks=$hasSystemHooks")
             
@@ -66,10 +67,10 @@ class SystemLevelClipboardMonitor @Inject constructor(
             
             // Try native hooks first, then Xposed as fallback
             val success = when {
-                rootCapabilities.hasSystemHooks && nativeHookManager.isAvailable() -> {
+                rootCapabilities.hasSystemHooks && hasNativeHooks -> {
                     startNativeHookMonitoring()
                 }
-                rootCapabilities.hasXposedFramework && xposedHookManager.isAvailable() -> {
+                rootCapabilities.hasXposedFramework && hasXposedHooks -> {
                     startXposedHookMonitoring()
                 }
                 else -> false
@@ -278,8 +279,10 @@ class SystemLevelClipboardMonitor @Inject constructor(
      */
     suspend fun isSystemLevelMonitoringAvailable(): Boolean {
         val rootCapabilities = rootDetectionService.getRootCapabilities()
-        return (rootCapabilities.hasSystemHooks && nativeHookManager.isAvailable()) ||
-                (rootCapabilities.hasXposedFramework && xposedHookManager.isAvailable())
+        val hasNativeHooks = nativeHookManager.isAvailable()
+        val hasXposedHooks = xposedHookManager.isAvailable()
+        return (rootCapabilities.hasSystemHooks && hasNativeHooks) ||
+                (rootCapabilities.hasXposedFramework && hasXposedHooks)
     }
     
     /**
@@ -287,12 +290,14 @@ class SystemLevelClipboardMonitor @Inject constructor(
      */
     suspend fun getSystemCapabilities(): Map<String, Boolean> {
         val rootCapabilities = rootDetectionService.getRootCapabilities()
+        val hasNativeHooks = nativeHookManager.isAvailable()
+        val hasXposedHooks = xposedHookManager.isAvailable()
         return mapOf(
             "hasRoot" to rootDetectionService.isRooted(),
             "hasSystemHooks" to rootCapabilities.hasSystemHooks,
             "hasXposedFramework" to rootCapabilities.hasXposedFramework,
-            "nativeHooksAvailable" to nativeHookManager.isAvailable(),
-            "xposedHooksAvailable" to xposedHookManager.isAvailable()
+            "nativeHooksAvailable" to hasNativeHooks,
+            "xposedHooksAvailable" to hasXposedHooks
         )
     }
 }

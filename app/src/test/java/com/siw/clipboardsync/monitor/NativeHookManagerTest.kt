@@ -40,7 +40,7 @@ class NativeHookManagerTest {
     }
 
     @Test
-    fun `isAvailable returns true when native library is available`() {
+    fun `isAvailable returns true when native library is available`() = runTest {
         // Given: Native library is available
         every { anyConstructed<NativeClipboardHook>().isNativeLibraryAvailable() } returns true
         
@@ -52,7 +52,7 @@ class NativeHookManagerTest {
     }
 
     @Test
-    fun `isAvailable returns false when native library is not available`() {
+    fun `isAvailable returns false when native library is not available`() = runTest {
         // Given: Native library is not available
         every { anyConstructed<NativeClipboardHook>().isNativeLibraryAvailable() } returns false
         
@@ -267,7 +267,8 @@ class NativeHookManagerTest {
     @Test
     fun `state consistency maintained across operations`() = runTest {
         // Given: Fresh manager
-        assertFalse(nativeHookManager.isAvailable() && nativeHookManager.isMonitoring())
+        val isAvailable = nativeHookManager.isAvailable()
+        assertFalse(isAvailable && nativeHookManager.isMonitoring())
         
         // When: Performing sequence of operations
         assertTrue(nativeHookManager.initialize())

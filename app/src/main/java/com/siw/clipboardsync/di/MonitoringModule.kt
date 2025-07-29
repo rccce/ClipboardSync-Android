@@ -65,9 +65,10 @@ object MonitoringModule {
     @Provides
     @Singleton
     fun provideNativeHookManager(
-        @ApplicationContext context: Context
+        @ApplicationContext context: Context,
+        rootDetectionService: RootDetectionService
     ): NativeHookManager {
-        return NativeHookManager(context)
+        return NativeHookManager(context, rootDetectionService)
     }
     
     @Provides
