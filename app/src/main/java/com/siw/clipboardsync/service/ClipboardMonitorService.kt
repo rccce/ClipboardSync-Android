@@ -41,6 +41,11 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     private var backgroundAccessDeniedCount = 0
     private var isShowingBackgroundLimitationNotification = false
     
+    // Advanced monitoring integration
+    private var useAdvancedMonitoring = true
+    private var advancedMonitoringEnabled = false
+    private var fallbackToPolling = false
+    
     companion object {
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "clipboard_sync_channel"
@@ -96,6 +101,9 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
             try {
                 clipboardSyncManager.initialize()
                 Log.d(TAG, "ClipboardSyncManager initialization completed")
+                
+                // Check if advanced monitoring is available and enable it
+                initializeAdvancedMonitoring()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize sync manager", e)
             }
@@ -215,20 +223,49 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     private suspend fun adaptiveClipboardMonitoring() {
         Log.d(TAG, "Starting adaptive clipboard monitoring")
         
-        while (isMonitoring) {
-            try {
-                val pollInterval = calculatePollInterval()
-                val success = checkClipboardChanges()
-                
-                if (!success && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    handleBackgroundAccessDenied()
+        // If advanced monitoring is enabled, we don't need to poll
+        if (advancedMonitoringEnabled && !fallbackToPolling) {
+            Log.i(TAG, "Advanced monitoring is active, skipping polling loop")
+            
+            // Just monitor the advanced monitoring status and fallback if needed
+            while (isMonitoring) {
+                try {
+                    // Check if advanced monitoring is still active
+                    if (!clipboardSyncManager.isMonitoringActive.value) {
+                        Log.w(TAG, "Advanced monitoring became inactive, falling back to polling")
+                        fallbackToPolling = true
+                        break
+                    }
+                    
+                    delay(5000) // Check every 5 seconds
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error monitoring advanced monitoring status", e)
+                    fallbackToPolling = true
+                    break
                 }
-                
-                delay(pollInterval)
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in clipboard monitoring loop", e)
-                delay(5000) // Wait longer on error
+            }
+        }
+        
+        // Use legacy polling if advanced monitoring is not available or failed
+        if (shouldUseLegacyPolling()) {
+            Log.i(TAG, "Using legacy polling for clipboard monitoring")
+            
+            while (isMonitoring) {
+                try {
+                    val pollInterval = calculatePollInterval()
+                    val success = checkClipboardChanges()
+                    
+                    if (!success && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        handleBackgroundAccessDenied()
+                    }
+                    
+                    delay(pollInterval)
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in clipboard monitoring loop", e)
+                    delay(5000) // Wait longer on error
+                }
             }
         }
     }
@@ -407,5 +444,81 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
         val notification = createNotification(contentText)
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+    
+    // Advanced Monitoring Integration
+    
+    /**
+     * Initialize advanced monitoring system
+     */
+    private suspend fun initializeAdvancedMonitoring() {
+        try {
+            if (!useAdvancedMonitoring) {
+                Log.d(TAG, "Advanced monitoring disabled, using legacy polling")
+                return
+            }
+            
+            Log.d(TAG, "Checking advanced monitoring availability")
+            
+            if (clipboardSyncManager.isAdvancedMonitoringAvailable()) {
+                Log.i(TAG, "Advanced monitoring available, attempting to enable")
+                
+                val success = clipboardSyncManager.enableAdvancedMonitoring()
+                if (success) {
+                    advancedMonitoringEnabled = true
+                    fallbackToPolling = false
+                    Log.i(TAG, "Advanced monitoring enabled successfully")
+                    
+                    // Update notification to reflect advanced monitoring
+                    updateNotification("Advanced monitoring active")
+                    
+                    // Observe monitoring method changes
+                    serviceScope.launch {
+                        clipboardSyncManager.monitoringMethod.collect { method ->
+                            method?.let {
+                                Log.d(TAG, "Advanced monitoring method: ${it.name}")
+                                updateNotificationForAdvancedMonitoring(it.name)
+                            }
+                        }
+                    }
+                } else {
+                    Log.w(TAG, "Failed to enable advanced monitoring, falling back to polling")
+                    fallbackToPolling = true
+                }
+            } else {
+                Log.i(TAG, "Advanced monitoring not available on this device, using polling")
+                fallbackToPolling = true
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing advanced monitoring", e)
+            fallbackToPolling = true
+        }
+    }
+    
+    /**
+     * Update notification to show advanced monitoring status
+     */
+    private fun updateNotificationForAdvancedMonitoring(methodName: String) {
+        val notificationText = when (methodName) {
+            "SYSTEM_HOOKS" -> "System-level monitoring active"
+            "XPOSED_HOOKS" -> "Xposed framework monitoring active"
+            "ACCESSIBILITY_SERVICE" -> "Accessibility monitoring active"
+            "FOREGROUND_SERVICE" -> "Foreground service monitoring active"
+            "POLLING_FALLBACK" -> "Polling fallback monitoring active"
+            else -> "Advanced monitoring active"
+        }
+        
+        serviceScope.launch {
+            delay(1000) // Brief delay to avoid notification spam
+            updateNotification(notificationText)
+        }
+    }
+    
+    /**
+     * Check if we should use legacy polling instead of advanced monitoring
+     */
+    private fun shouldUseLegacyPolling(): Boolean {
+        return !useAdvancedMonitoring || !advancedMonitoringEnabled || fallbackToPolling
     }
 }

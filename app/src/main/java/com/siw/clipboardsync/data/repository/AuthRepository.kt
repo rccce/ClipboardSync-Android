@@ -3,6 +3,7 @@ package com.siw.clipboardsync.data.repository
 import com.siw.clipboardsync.data.local.TokenManager
 import com.siw.clipboardsync.data.model.*
 import com.siw.clipboardsync.data.network.ApiService
+import com.siw.clipboardsync.data.network.AuthInterceptor
 import com.siw.clipboardsync.utils.DeviceUtils
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -11,10 +12,17 @@ import javax.inject.Singleton
 @Singleton
 class AuthRepository @Inject constructor(
     private val apiService: ApiService,
-    private val tokenManager: TokenManager
+    private val tokenManager: TokenManager,
+    private val authInterceptor: AuthInterceptor
 ) {
     
     val isLoggedIn: Flow<Boolean> = tokenManager.isLoggedIn
+    
+    init {
+        // 设置TokenManager和AuthInterceptor的刷新回调
+        tokenManager.setAuthRepository { refreshToken() }
+        authInterceptor.setAuthRepository { refreshToken() }
+    }
     
     suspend fun register(email: String, password: String): Result<AuthData> {
         return try {

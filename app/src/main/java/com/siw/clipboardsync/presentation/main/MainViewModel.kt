@@ -8,6 +8,8 @@ import com.siw.clipboardsync.data.repository.ClipboardRepository
 import com.siw.clipboardsync.data.model.ClipboardItem
 import com.siw.clipboardsync.manager.ServiceManager
 import com.siw.clipboardsync.manager.ClipboardSyncManager
+import com.siw.clipboardsync.monitor.ClipboardMonitorManager
+import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.utils.ClipboardUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -23,6 +25,7 @@ class MainViewModel @Inject constructor(
     private val clipboardRepository: ClipboardRepository,
     private val serviceManager: ServiceManager,
     private val clipboardSyncManager: ClipboardSyncManager,
+    private val monitorManager: ClipboardMonitorManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     
@@ -34,6 +37,8 @@ class MainViewModel @Inject constructor(
         checkServiceStatus()
         // Initialize ClipboardSyncManager first, then start observing
         initializeAndObserveClipboardSync()
+        // Initialize and observe advanced monitoring
+        initializeAndObserveMonitoring()
         autoStartClipboardSync()
         // Auto-start WebSocket connection when app starts
         autoStartWebSocketConnection()
@@ -289,6 +294,107 @@ class MainViewModel @Inject constructor(
             }
         }
     }
+    
+    private fun initializeAndObserveMonitoring() {
+        // Initialize monitoring manager and start observing
+        viewModelScope.launch {
+            try {
+                monitorManager.initialize()
+                android.util.Log.d("MainViewModel", "MonitorManager initialized")
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Failed to initialize MonitorManager", e)
+            }
+        }
+        observeMonitoring()
+    }
+    
+    private fun observeMonitoring() {
+        // Observe monitoring status
+        viewModelScope.launch {
+            monitorManager.isMonitoring.collect { isMonitoring ->
+                _uiState.value = _uiState.value.copy(isAdvancedMonitoring = isMonitoring)
+            }
+        }
+        
+        // Observe current monitoring method
+        viewModelScope.launch {
+            monitorManager.currentMethod.collect { method ->
+                _uiState.value = _uiState.value.copy(currentMonitoringMethod = method)
+            }
+        }
+    }
+    
+    fun showMonitoringDiagnostics() {
+        viewModelScope.launch {
+            try {
+                val diagnostics = clipboardSyncManager.getMonitoringDiagnostics()
+                val diagnosticsText = buildString {
+                    appendLine("=== MONITORING DIAGNOSTICS ===")
+                    diagnostics.forEach { (key, value) ->
+                        when (value) {
+                            is Map<*, *> -> {
+                                appendLine("$key:")
+                                value.forEach { (subKey, subValue) ->
+                                    appendLine("  $subKey: $subValue")
+                                }
+                            }
+                            is List<*> -> {
+                                appendLine("$key:")
+                                value.forEach { item ->
+                                    appendLine("  - $item")
+                                }
+                            }
+                            else -> appendLine("$key: $value")
+                        }
+                    }
+                }
+                
+                android.util.Log.i("MonitoringDiagnostics", diagnosticsText)
+                
+                // Also show in UI as error message for now (temporary debug solution)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Diagnostics logged - check logcat for 'MonitoringDiagnostics'"
+                )
+                
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Failed to get monitoring diagnostics", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Failed to get diagnostics: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    fun requestRootAccess() {
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Requesting root access..."
+                )
+                
+                val success = clipboardSyncManager.requestRootAccessAndReinitialize()
+                
+                if (success) {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "Root access granted! Advanced monitoring enabled."
+                    )
+                    
+                    // Refresh diagnostics to show updated status
+                    showMonitoringDiagnostics()
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "Root access denied or failed. Check your root manager app."
+                    )
+                }
+                
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Failed to request root access", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Error requesting root access: ${e.message}"
+                )
+            }
+        }
+    }
 }
 
 data class MainUiState(
@@ -303,5 +409,8 @@ data class MainUiState(
     val syncStatus: ClipboardSyncManager.SyncStatus = ClipboardSyncManager.SyncStatus.DISCONNECTED,
     val lastIncomingUpdate: ClipboardItem? = null,
     val incomingUpdateTimestamp: Long = 0L,
-    val autoUpdateClipboard: Boolean = true
+    val autoUpdateClipboard: Boolean = true,
+    // Advanced monitoring state
+    val isAdvancedMonitoring: Boolean = false,
+    val currentMonitoringMethod: MonitoringMethod? = null
 )

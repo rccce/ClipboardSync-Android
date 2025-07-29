@@ -39,6 +39,16 @@ fun ClipboardSyncApp() {
     val authViewModel: AuthViewModel = hiltViewModel()
     val isLoggedIn by authViewModel.isLoggedIn.collectAsState(initial = false)
     
+    // 监听认证状态变化并自动导航
+    LaunchedEffect(isLoggedIn) {
+        if (!isLoggedIn) {
+            // Token过期或被清除，自动导航到登录页面
+            navController.navigate("login") {
+                popUpTo(0) { inclusive = true }
+            }
+        }
+    }
+    
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
         NavHost(
             navController = navController,

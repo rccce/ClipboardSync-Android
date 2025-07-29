@@ -18,12 +18,14 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.siw.clipboardsync.data.model.ClipboardItem
 import com.siw.clipboardsync.manager.ClipboardSyncManager
+import com.siw.clipboardsync.presentation.monitoring.MonitoringStatusIndicator
 import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
+    onNavigateToMonitoringSettings: () -> Unit = {},
     viewModel: MainViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -59,6 +61,35 @@ fun MainScreen(
             style = MaterialTheme.typography.headlineLarge,
             modifier = Modifier.padding(bottom = 8.dp)
         )
+        
+        // Advanced Monitoring Status
+        MonitoringStatusIndicator(
+            isMonitoring = uiState.isAdvancedMonitoring,
+            currentMethod = uiState.currentMonitoringMethod,
+            hasPermissions = uiState.hasRequiredPermissions,
+            onSettingsClick = onNavigateToMonitoringSettings
+        )
+        
+        // Debug: Monitoring Diagnostics Button
+        Button(
+            onClick = { viewModel.showMonitoringDiagnostics() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Show Monitoring Diagnostics")
+        }
+        
+        // Request Root Access Button
+        Button(
+            onClick = { viewModel.requestRootAccess() },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.secondary
+            )
+        ) {
+            Text("Request Root Access")
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
         
         // Unified Clipboard Sync Card
         UnifiedClipboardSyncCard(
