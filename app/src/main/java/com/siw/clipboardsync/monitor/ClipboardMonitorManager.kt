@@ -166,6 +166,8 @@ class ClipboardMonitorManager @Inject constructor(
             externalListener.get()?.onMonitoringError(ClipboardError.UnknownError(e))
         }
     }
+
+
     
     /**
      * Switches to a different monitoring method while preserving state.

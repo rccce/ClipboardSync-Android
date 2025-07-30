@@ -53,8 +53,7 @@ data class MonitoringStatus(
     val isMonitoring: Boolean,
     val currentMethod: MonitoringMethod?,
     val isAdvancedMonitoring: Boolean,
-    val availableMethods: List<MonitoringMethod>,
-    val imeStatus: IMEStatus?
+    val availableMethods: List<MonitoringMethod>
 ) {
     val statusText: String
         get() = when {
@@ -79,30 +78,7 @@ data class MonitoringStatus(
         }
 }
 
-/**
- * IME service status
- */
-data class IMEStatus(
-    val imeEnabled: Boolean,
-    val imeSelected: Boolean,
-    val imeRunning: Boolean,
-    val canMonitorClipboard: Boolean
-) {
-    val statusText: String
-        get() = when {
-            canMonitorClipboard -> "IME Ready"
-            imeRunning -> "IME Running (Not Selected)"
-            imeEnabled -> "IME Enabled (Not Running)"
-            else -> "IME Not Enabled"
-        }
-    
-    val statusColor: SystemStatusColor
-        get() = when {
-            canMonitorClipboard -> SystemStatusColor.SUCCESS
-            imeEnabled -> SystemStatusColor.WARNING
-            else -> SystemStatusColor.ERROR
-        }
-}
+
 
 /**
  * WebSocket and network connection status

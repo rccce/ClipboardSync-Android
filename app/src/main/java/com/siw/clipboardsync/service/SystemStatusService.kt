@@ -67,7 +67,7 @@ class SystemStatusService @Inject constructor(
             // Return default status on error
             SystemStatus(
                 rootStatus = RootStatus(false, com.siw.clipboardsync.monitor.model.RootCapabilities.RootMethod.NONE, false, false, false, false, null, false),
-                monitoringStatus = MonitoringStatus(false, null, false, emptyList(), null),
+                monitoringStatus = MonitoringStatus(false, null, false, emptyList()),
                 connectionStatus = ConnectionStatus(ClipboardSyncManager.SyncStatus.DISCONNECTED, false, null, null),
                 batteryOptimizationStatus = BatteryOptimizationStatus(false, false, false, false, BatteryOptimizationStatus.PowerSaveMode.UNKNOWN),
                 permissionStatus = PermissionStatus(false, emptyList(), false, false, false),
@@ -108,38 +108,19 @@ class SystemStatusService @Inject constructor(
             val isMonitoring = monitorManager.isMonitoring.value
             val currentMethod = monitorManager.currentMethod.value
             val monitoringStatus = monitorManager.getMonitoringStatus()
-            val imeStatus = getIMEStatus()
-            
             MonitoringStatus(
                 isMonitoring = isMonitoring,
                 currentMethod = currentMethod,
                 isAdvancedMonitoring = isMonitoring,
-                availableMethods = monitoringStatus.availableStrategies.map { it.method },
-                imeStatus = imeStatus
+                availableMethods = monitoringStatus.availableStrategies.map { it.method }
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error getting monitoring status", e)
-            MonitoringStatus(false, null, false, emptyList(), null)
+            MonitoringStatus(false, null, false, emptyList())
         }
     }
     
-    /**
-     * Get IME service status
-     */
-    private fun getIMEStatus(): IMEStatus {
-        return try {
-            // TODO: Implement IME status when IMEClipboardManager is available
-            IMEStatus(
-                imeEnabled = false,
-                imeSelected = false,
-                imeRunning = false,
-                canMonitorClipboard = false
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting IME status", e)
-            IMEStatus(false, false, false, false)
-        }
-    }
+
     
     /**
      * Get WebSocket connection status

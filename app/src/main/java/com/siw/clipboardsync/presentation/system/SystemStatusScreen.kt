@@ -101,13 +101,6 @@ fun SystemStatusScreen(
                                     add("Active Method" to method.name.replace("_", " "))
                                 }
                                 add("Available Methods" to "${status.monitoringStatus.availableMethods.size}")
-                                
-                                // IME Status
-                                status.monitoringStatus.imeStatus?.let { imeStatus ->
-                                    add("IME Service" to imeStatus.statusText)
-                                    add("IME Enabled" to if (imeStatus.imeEnabled) "Yes" else "No")
-                                    add("IME Running" to if (imeStatus.imeRunning) "Yes" else "No")
-                                }
                             },
                             actions = if (!status.monitoringStatus.isMonitoring) {
                                 listOf("Start Monitoring" to { viewModel.startMonitoring() })
