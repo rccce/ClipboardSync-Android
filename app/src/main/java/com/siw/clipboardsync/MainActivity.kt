@@ -17,6 +17,7 @@ import com.siw.clipboardsync.presentation.auth.AuthViewModel
 import com.siw.clipboardsync.presentation.auth.LoginScreen
 import com.siw.clipboardsync.presentation.auth.RegisterScreen
 import com.siw.clipboardsync.presentation.main.MainScreen
+import com.siw.clipboardsync.presentation.system.SystemStatusScreen
 import com.siw.clipboardsync.ui.theme.ClipboardSyncTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -74,7 +75,15 @@ fun ClipboardSyncApp() {
             }
             
             composable("main") {
-                MainScreen()
+                MainScreen(
+                    onNavigateToSystemStatus = { navController.navigate("system_status") }
+                )
+            }
+            
+            composable("system_status") {
+                SystemStatusScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
             }
         }
     }

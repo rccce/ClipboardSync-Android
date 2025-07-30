@@ -324,77 +324,7 @@ class MainViewModel @Inject constructor(
         }
     }
     
-    fun showMonitoringDiagnostics() {
-        viewModelScope.launch {
-            try {
-                val diagnostics = clipboardSyncManager.getMonitoringDiagnostics()
-                val diagnosticsText = buildString {
-                    appendLine("=== MONITORING DIAGNOSTICS ===")
-                    diagnostics.forEach { (key, value) ->
-                        when (value) {
-                            is Map<*, *> -> {
-                                appendLine("$key:")
-                                value.forEach { (subKey, subValue) ->
-                                    appendLine("  $subKey: $subValue")
-                                }
-                            }
-                            is List<*> -> {
-                                appendLine("$key:")
-                                value.forEach { item ->
-                                    appendLine("  - $item")
-                                }
-                            }
-                            else -> appendLine("$key: $value")
-                        }
-                    }
-                }
-                
-                android.util.Log.i("MonitoringDiagnostics", diagnosticsText)
-                
-                // Also show in UI as error message for now (temporary debug solution)
-                _uiState.value = _uiState.value.copy(
-                    errorMessage = "Diagnostics logged - check logcat for 'MonitoringDiagnostics'"
-                )
-                
-            } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Failed to get monitoring diagnostics", e)
-                _uiState.value = _uiState.value.copy(
-                    errorMessage = "Failed to get diagnostics: ${e.message}"
-                )
-            }
-        }
-    }
-    
-    fun requestRootAccess() {
-        viewModelScope.launch {
-            try {
-                _uiState.value = _uiState.value.copy(
-                    errorMessage = "Requesting root access..."
-                )
-                
-                val success = clipboardSyncManager.requestRootAccessAndReinitialize()
-                
-                if (success) {
-                    _uiState.value = _uiState.value.copy(
-                        errorMessage = "Root access granted! Advanced monitoring enabled."
-                    )
-                    
-                    // Refresh diagnostics to show updated status
-                    showMonitoringDiagnostics()
-                } else {
-                    _uiState.value = _uiState.value.copy(
-                        errorMessage = "Root access denied or failed. Check your root manager app."
-                    )
-                }
-                
-            } catch (e: Exception) {
-                android.util.Log.e("MainViewModel", "Failed to request root access", e)
-                _uiState.value = _uiState.value.copy(
-                    errorMessage = "Error requesting root access: ${e.message}"
-                )
-            }
-        }
-    }
+
 }
 
 data class MainUiState(
