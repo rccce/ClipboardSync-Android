@@ -44,6 +44,9 @@ class WebSocketClient @Inject constructor(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var heartbeatJob: Job? = null
     
+    // 新增：获取最新token的提供器
+    private var tokenProvider: (suspend () -> String?)? = null
+    
     // Message flows - with replay buffer to ensure messages aren't lost
     private val _clipboardUpdates = MutableSharedFlow<ClipboardItem>(
         replay = 1, // Keep the last message for new collectors
@@ -69,6 +72,11 @@ class WebSocketClient @Inject constructor(
         CONNECTING, CONNECTED, DISCONNECTED, RECONNECTING, FAILED
     }
     
+    // 提供设置tokenProvider的方法
+    fun setTokenProvider(provider: suspend () -> String?) {
+        this.tokenProvider = provider
+    }
+    
     /**
      * Connect to WebSocket server
      */
@@ -88,7 +96,8 @@ class WebSocketClient @Inject constructor(
             val connectingEmitResult = _connectionStatus.tryEmit(ConnectionStatus.CONNECTING)
             Log.d(TAG, "CONNECTING status emit result: $connectingEmitResult")
             
-            val wsUrl = "$baseUrl/ws/sync?token=$accessToken"
+            val effectiveToken = accessToken
+            val wsUrl = "$baseUrl/ws/sync?token=$effectiveToken"
             Log.d(TAG, "Connecting to WebSocket: $wsUrl")
             val uri = URI.create(wsUrl)
             
@@ -486,6 +495,17 @@ class WebSocketClient @Inject constructor(
         
         scope.launch {
             delay(RECONNECT_DELAY_MS)
+            
+            // 在重连前尝试获取最新token
+            val latestToken = try {
+                tokenProvider?.invoke()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get latest token for reconnect", e)
+                null
+            }
+            if (latestToken != null) {
+                accessToken = latestToken
+            }
             
             if (accessToken != null && userId != null && deviceId != null) {
                 connect(accessToken!!, userId!!, deviceId!!)

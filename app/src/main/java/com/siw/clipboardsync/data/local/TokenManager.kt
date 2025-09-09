@@ -10,6 +10,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -35,8 +39,12 @@ class TokenManager @Inject constructor(
     // Token自动刷新相关
     private val handler = Handler(Looper.getMainLooper())
     private var refreshTimer: Runnable? = null
+    @Volatile
     private var isRefreshing = false
     private val checkInterval = 10 * 60 * 1000L // 10分钟检查间隔
+    
+    // 用于执行刷新请求的协程作用域（后台线程）
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // AuthRepository引用（将在后续注入）
     private var authRepository: (suspend () -> Result<*>)? = null
@@ -105,17 +113,8 @@ class TokenManager @Inject constructor(
     }
     
     private fun hasValidTokens(): Boolean {
-        val accessToken = sharedPreferences.getString(ACCESS_TOKEN_KEY, null)
         val refreshToken = sharedPreferences.getString(REFRESH_TOKEN_KEY, null)
-        if (accessToken.isNullOrEmpty() || refreshToken.isNullOrEmpty()) {
-            return false
-        }
-        
-        // 检查Token是否过期
-        return when (TokenStatus.from(accessToken)) {
-            TokenStatus.EXPIRED, TokenStatus.INVALID -> false
-            else -> true
-        }
+        return !refreshToken.isNullOrEmpty()
     }
     
     /**
@@ -162,9 +161,14 @@ class TokenManager @Inject constructor(
         val accessToken = sharedPreferences.getString(ACCESS_TOKEN_KEY, null)
         val refreshToken = sharedPreferences.getString(REFRESH_TOKEN_KEY, null)
         
-        if (accessToken == null || refreshToken == null) {
-            Log.w("TokenManager", "⚠️ Token缺失，需要重新登录")
+        if (refreshToken == null) {
+            Log.w("TokenManager", "⚠️ 缺少refresh token，需要重新登录")
             logout()
+            return
+        }
+        if (accessToken == null) {
+            Log.w("TokenManager", "⚠️ 缺少access token，尝试刷新")
+            performTokenRefresh()
             return
         }
         
@@ -197,20 +201,31 @@ class TokenManager @Inject constructor(
      */
     private fun performTokenRefresh() {
         if (isRefreshing) return
+        val refreshFunction = authRepository
+        if (refreshFunction == null) {
+            Log.w("TokenManager", "⚠️ 刷新回调未就绪，稍后再试")
+            return
+        }
         isRefreshing = true
         
         Log.d("TokenManager", "🔄 开始刷新Token...")
         
-        // 由于我们在Handler中，实际刷新主要由AuthInterceptor处理
-        // 这里只是标记需要刷新，避免复杂的协程处理
-        if (authRepository != null) {
-            Log.d("TokenManager", "📝 标记Token需要刷新，将由401拦截器处理")
-        } else {
-            Log.e("TokenManager", "❌ AuthRepository未设置，无法刷新Token")
-            logout()
+        scope.launch {
+            try {
+                val result = refreshFunction()
+                if (result.isSuccess) {
+                    Log.d("TokenManager", "✅ Token刷新成功")
+                } else {
+                    Log.e("TokenManager", "❌ Token刷新失败: ${result.exceptionOrNull()?.message}")
+                    logout()
+                }
+            } catch (e: Exception) {
+                Log.e("TokenManager", "❌ Token刷新异常", e)
+                logout()
+            } finally {
+                isRefreshing = false
+            }
         }
-        
-        isRefreshing = false
     }
     
     /**

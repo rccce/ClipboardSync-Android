@@ -32,11 +32,23 @@ class JWTParser {
                 val decodedBytes = Base64.decode(addPadding(payload), Base64.URL_SAFE or Base64.NO_WRAP)
                 val json = JSONObject(String(decodedBytes))
                 
+                val expObj = json.opt("exp")
+                val expSec = when (expObj) {
+                    is Number -> expObj.toDouble().toLong()
+                    is String -> expObj.toDoubleOrNull()?.toLong() ?: 0L
+                    else -> 0L
+                }
+                val iatObj = json.opt("iat")
+                val iatSec = when (iatObj) {
+                    is Number -> iatObj.toDouble().toLong()
+                    is String -> iatObj.toDoubleOrNull()?.toLong() ?: (System.currentTimeMillis() / 1000)
+                    else -> (System.currentTimeMillis() / 1000)
+                }
                 TokenInfo(
                     userId = json.optString("user_id", ""),
                     deviceId = json.optString("device_id").takeIf { it.isNotEmpty() },
-                    expirationTime = Date(json.getLong("exp") * 1000),
-                    issuedAt = Date(json.optLong("iat", System.currentTimeMillis() / 1000) * 1000)
+                    expirationTime = Date(expSec * 1000),
+                    issuedAt = Date(iatSec * 1000)
                 )
             } catch (e: Exception) {
                 android.util.Log.e("JWTParser", "Failed to parse token", e)

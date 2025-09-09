@@ -87,6 +87,16 @@ class ClipboardSyncManager @Inject constructor(
                 scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
             }
             
+            // 设置WebSocketClient的tokenProvider，以便重连或连接前获取最新token
+            webSocketClient.setTokenProvider {
+                try {
+                    authRepository.getValidAccessToken()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to fetch latest access token for WebSocket", e)
+                    null
+                }
+            }
+            
             // Start observing connection status immediately
             startObservingConnectionStatus()
             
@@ -168,8 +178,6 @@ class ClipboardSyncManager @Inject constructor(
         scope.launch {
             try {
                 Log.d(TAG, "Starting WebSocket connection for device: $deviceId")
-                // Don't manually set CONNECTING status here - let the WebSocket observer handle it
-                // _syncStatus.value = SyncStatus.CONNECTING
                 
                 // Get user ID from auth repository
                 val currentUser = authRepository.getCurrentUser()
@@ -179,8 +187,11 @@ class ClipboardSyncManager @Inject constructor(
                     return@launch
                 }
                 
+                // 确保使用有效的最新token
+                val latestAccess = authRepository.getValidAccessToken() ?: accessToken
+                
                 // Connect to WebSocket - the connection status observer will handle status updates
-                webSocketClient.connect(accessToken, currentUser.id, deviceId)
+                webSocketClient.connect(latestAccess, currentUser.id, deviceId)
                 Log.d(TAG, "WebSocket connect() called, waiting for status updates from observer")
                 
             } catch (e: Exception) {

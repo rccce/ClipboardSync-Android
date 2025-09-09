@@ -18,7 +18,7 @@ interface ApiService {
     suspend fun login(@Body request: LoginRequest): Response<AuthResponse>
     
     @POST("api/v1/auth/refresh")
-    suspend fun refreshToken(@Body request: RefreshTokenRequest): Response<AuthResponse>
+    suspend fun refreshToken(@Body request: RefreshTokenRequest): Response<RefreshResponse>
     
     // Device management
     @POST("api/v1/devices")

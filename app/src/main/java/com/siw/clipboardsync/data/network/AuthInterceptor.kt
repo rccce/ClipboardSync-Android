@@ -42,7 +42,7 @@ class AuthInterceptor @Inject constructor(
         var response = chain.proceed(request)
         
         // Handle 401 Unauthorized
-        if (response.code == 401 && token != null) {
+        if ((response.code == 401 || response.code == 403) && token != null) {
             Log.d("AuthInterceptor", "🔄 收到401错误，尝试刷新Token并重试")
             
             response.close()
