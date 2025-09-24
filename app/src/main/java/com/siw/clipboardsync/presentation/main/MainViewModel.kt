@@ -156,6 +156,13 @@ class MainViewModel @Inject constructor(
     
     fun checkPermissions() {
         checkServiceStatus()
+        
+        // Check if advanced monitoring should be auto-started after permission changes
+        viewModelScope.launch {
+            if (_uiState.value.hasRequiredPermissions && !_uiState.value.isAdvancedMonitoring) {
+                autoStartAdvancedMonitoring()
+            }
+        }
     }
     
     fun refreshServiceStatus() {
@@ -253,6 +260,13 @@ class MainViewModel @Inject constructor(
             // The service should start automatically when user is logged in
             if (uiState.value.hasRequiredPermissions && !uiState.value.isServiceRunning) {
                 startClipboardService()
+                
+                // After starting the service, also check if we should auto-start advanced monitoring
+                // Wait a moment for service to initialize properly
+                kotlinx.coroutines.delay(500)
+                if (!_uiState.value.isAdvancedMonitoring) {
+                    autoStartAdvancedMonitoring()
+                }
             }
         }
     }
@@ -301,6 +315,9 @@ class MainViewModel @Inject constructor(
             try {
                 monitorManager.initialize()
                 android.util.Log.d("MainViewModel", "MonitorManager initialized")
+                
+                // Auto-start advanced monitoring after initialization
+                autoStartAdvancedMonitoring()
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Failed to initialize MonitorManager", e)
             }
@@ -324,6 +341,67 @@ class MainViewModel @Inject constructor(
         }
     }
     
+    fun startAdvancedMonitoring() {
+        viewModelScope.launch {
+            try {
+                if (!_uiState.value.hasRequiredPermissions) {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "Required permissions not granted. Please grant accessibility permission."
+                    )
+                    return@launch
+                }
+                
+                if (_uiState.value.isAdvancedMonitoring) {
+                    android.util.Log.d("MainViewModel", "Advanced monitoring already active")
+                    return@launch
+                }
+                
+                android.util.Log.d("MainViewModel", "Starting advanced monitoring manually...")
+                monitorManager.startMonitoring()
+                android.util.Log.d("MainViewModel", "Advanced monitoring started successfully")
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Failed to start advanced monitoring", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Failed to start advanced monitoring: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    fun stopAdvancedMonitoring() {
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("MainViewModel", "Stopping advanced monitoring...")
+                monitorManager.stopMonitoring()
+                android.util.Log.d("MainViewModel", "Advanced monitoring stopped successfully")
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Failed to stop advanced monitoring", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Failed to stop advanced monitoring: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    private fun autoStartAdvancedMonitoring() {
+        viewModelScope.launch {
+            try {
+                // Auto-start advanced monitoring if permissions are available
+                if (_uiState.value.hasRequiredPermissions && !_uiState.value.isAdvancedMonitoring) {
+                    android.util.Log.d("MainViewModel", "Auto-starting advanced monitoring...")
+                    monitorManager.startMonitoring()
+                    android.util.Log.d("MainViewModel", "Advanced monitoring auto-started successfully")
+                } else if (!_uiState.value.hasRequiredPermissions) {
+                    android.util.Log.d("MainViewModel", "Cannot auto-start advanced monitoring: missing permissions")
+                } else {
+                    android.util.Log.d("MainViewModel", "Advanced monitoring already active")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Failed to auto-start advanced monitoring", e)
+                // Don't show error to user for auto-start failure - they can manually start it
+            }
+        }
+    }
 
 
 }

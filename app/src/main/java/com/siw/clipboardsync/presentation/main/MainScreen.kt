@@ -25,7 +25,6 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
-    onNavigateToMonitoringSettings: () -> Unit = {},
     onNavigateToSystemStatus: () -> Unit = {},
     viewModel: MainViewModel = hiltViewModel()
 ) {
@@ -83,7 +82,15 @@ fun MainScreen(
                 isMonitoring = uiState.isAdvancedMonitoring,
                 currentMethod = uiState.currentMonitoringMethod,
                 hasPermissions = uiState.hasRequiredPermissions,
-                onSettingsClick = onNavigateToMonitoringSettings
+                onSettingsClick = {
+                    if (!uiState.isAdvancedMonitoring && uiState.hasRequiredPermissions) {
+                        // If monitoring is inactive but permissions are available, start monitoring
+                        viewModel.startAdvancedMonitoring()
+                    } else {
+                        // Otherwise navigate to system status for detailed view
+                        onNavigateToSystemStatus()
+                    }
+                }
             )
             
             Spacer(modifier = Modifier.height(16.dp))
