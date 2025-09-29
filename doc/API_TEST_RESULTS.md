@@ -2,7 +2,7 @@
 
 ## 测试概述
 
-本文档记录了云剪贴板项目后端API的完整测试结果。所有测试均在 `http://localhost:8080` 进行。开发时api接入`https://clip.siw.me`,WebSocket接入`wss://clip.siw.me/ws/sync`
+本文档记录了云剪贴板项目后端API的完整测试结果。所有测试均在 `http://localhost:8080` 进行。开发时api接入`https://clip.imiss.me`,WebSocket接入`wss://clip.imiss.me/ws/sync`
 
 ## ✅ 测试通过的API
 
@@ -366,7 +366,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 **协议**: WebSocket  
 **认证**: Bearer Token (通过query参数)  
 **连接URL**: `ws://localhost:8080/ws/sync?token=jwt_access_token`  
-**生产环境**: `wss://clip.siw.me/ws/sync?token=jwt_access_token`
+**生产环境**: `wss://clip.imiss.me/ws/sync?token=jwt_access_token`
 
 #### 连接建立
 ```bash
