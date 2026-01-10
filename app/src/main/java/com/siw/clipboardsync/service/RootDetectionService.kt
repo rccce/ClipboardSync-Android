@@ -280,19 +280,88 @@ class RootDetectionService @Inject constructor(
      * Detects if Xposed or LSPosed framework is available
      */
     private fun checkXposedFramework(): Boolean {
-        return try {
-            // Check for Xposed framework
-            val xposedBridge = Class.forName("de.robv.android.xposed.XposedBridge")
-            xposedBridge != null
+        // Method 1: Check for LSPosed manager app (may be hidden)
+        if (isPackageInstalled("org.lsposed.manager")) {
+            Log.d(TAG, "LSPosed manager app detected")
+            return true
+        }
+        
+        // Method 2: Check for LSPosed module directory using root
+        val lsposedPaths = arrayOf(
+            "/data/adb/lspd",
+            "/data/adb/modules/zygisk_lsposed",
+            "/data/adb/modules/riru_lsposed"
+        )
+        for (path in lsposedPaths) {
+            // First try without root (in case we have access)
+            if (File(path).exists()) {
+                Log.d(TAG, "LSPosed path detected (direct): $path")
+                return true
+            }
+            // Try with root command using ls instead of test
+            if (checkPathExistsWithRoot(path)) {
+                Log.d(TAG, "LSPosed path detected (via root): $path")
+                return true
+            }
+        }
+        
+        // Method 3: Check for Xposed/LSPosed classes (only works if we're hooked)
+        try {
+            Class.forName("de.robv.android.xposed.XposedBridge")
+            Log.d(TAG, "XposedBridge class detected")
+            return true
         } catch (e: ClassNotFoundException) {
-            // Check for LSPosed
-            try {
-                val lsposedBridge = Class.forName("io.github.libxposed.api.XposedInterface")
-                lsposedBridge != null
-            } catch (e2: ClassNotFoundException) {
-                false
+            // Not loaded
+        }
+        
+        try {
+            Class.forName("io.github.libxposed.api.XposedInterface")
+            Log.d(TAG, "LSPosed API class detected")
+            return true
+        } catch (e: ClassNotFoundException) {
+            // Not loaded
+        }
+        
+        // Method 4: Check for EdXposed manager
+        if (isPackageInstalled("org.meowcat.edxposed.manager") || 
+            isPackageInstalled("com.solohsu.android.edxp.manager")) {
+            Log.d(TAG, "EdXposed manager app detected")
+            return true
+        }
+        
+        // Method 5: Check system properties
+        try {
+            val xposedVersion = System.getProperty("xposed.version")
+            if (xposedVersion != null) {
+                Log.d(TAG, "Xposed version property detected: $xposedVersion")
+                return true
             }
         } catch (e: Exception) {
+            // Property not available
+        }
+        
+        // Method 6: Check LSPosed config database exists (via root)
+        if (checkPathExistsWithRoot("/data/adb/lspd/config/modules_config.db")) {
+            Log.d(TAG, "LSPosed config database detected")
+            return true
+        }
+        
+        Log.d(TAG, "No Xposed/LSPosed framework detected")
+        return false
+    }
+    
+    /**
+     * Check if a path exists using root command
+     */
+    private fun checkPathExistsWithRoot(path: String): Boolean {
+        return try {
+            // Use ls command which is more reliable than test
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls $path"))
+            val exitCode = process.waitFor()
+            process.destroy()
+            exitCode == 0
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking path with root: $path", e)
             false
         }
     }

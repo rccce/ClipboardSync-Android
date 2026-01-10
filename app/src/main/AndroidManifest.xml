@@ -19,6 +19,10 @@
     
     <!-- Accessibility service permission for clipboard monitoring -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
+    
+    <!-- READ_LOGS permission for logcat-based clipboard monitoring (requires ADB grant) -->
+    <uses-permission android:name="android.permission.READ_LOGS" 
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:name=".ClipboardSyncApplication"
@@ -31,6 +35,20 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ClipboardSync"
         tools:targetApi="31">
+        
+        <!-- Xposed/LSPosed Module Metadata -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="Clipboard Sync - Background clipboard monitoring module" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

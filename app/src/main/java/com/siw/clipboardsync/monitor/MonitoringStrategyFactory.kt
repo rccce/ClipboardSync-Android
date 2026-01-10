@@ -55,8 +55,17 @@ class MonitoringStrategyFactory @Inject constructor(
         val rootCapabilities = rootDetectionService.getRootCapabilities()
         
         // System-level hooks (highest priority for rooted devices)
+        // NOTE: On Android 10+, even with root, system hooks may not work in background
+        // due to clipboard access restrictions. We need to verify native hooks are actually available.
         Log.d(TAG, "Root capabilities check: hasSystemHooks=${rootCapabilities.hasSystemHooks}, hasRootAccess=${rootCapabilities.hasRootAccess}, rootMethod=${rootCapabilities.rootMethod}")
-        if (rootCapabilities.hasSystemHooks) {
+        
+        // On Android 10+, system hooks are less reliable due to background restrictions
+        // Only mark as available if we have actual native hook support (not just root)
+        val systemHooksActuallyAvailable = rootCapabilities.hasSystemHooks && 
+            rootCapabilities.hasNativeAccess && 
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q // System hooks work better on Android 9 and below
+        
+        if (systemHooksActuallyAvailable) {
             strategies.add(
                 MonitoringStrategy(
                     method = MonitoringMethod.SYSTEM_HOOKS,
@@ -71,7 +80,28 @@ class MonitoringStrategyFactory @Inject constructor(
                     )
                 )
             )
-            Log.d(TAG, "System hooks strategy available")
+            Log.d(TAG, "System hooks strategy available (Android < 10 with native access)")
+        } else if (rootCapabilities.hasSystemHooks) {
+            // On Android 10+, system hooks have limited background access
+            // Add with lower priority so accessibility service is preferred
+            strategies.add(
+                MonitoringStrategy(
+                    method = MonitoringMethod.SYSTEM_HOOKS,
+                    priority = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        FOREGROUND_SERVICE_PRIORITY - 5 // Lower than accessibility on Android 10+
+                    } else {
+                        SYSTEM_HOOKS_PRIORITY
+                    },
+                    isAvailable = rootCapabilities.hasNativeAccess,
+                    capabilities = setOf(
+                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
+                        MonitoringStrategy.Capability.LOW_LATENCY,
+                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES,
+                        MonitoringStrategy.Capability.SYSTEM_LEVEL_ACCESS
+                    )
+                )
+            )
+            Log.d(TAG, "System hooks strategy available with reduced priority (Android 10+ background restrictions)")
         } else {
             Log.d(TAG, "System hooks strategy NOT available - hasSystemHooks=false")
         }
@@ -129,15 +159,19 @@ class MonitoringStrategyFactory @Inject constructor(
         }
         
         // Accessibility service (good for Android 10+ non-root devices)
+        // On Android 10+, this is the MOST RELIABLE method for background clipboard monitoring
         val accessibilityAvailable = accessibilityPermissionManager.isAccessibilityServiceEnabled()
+        val accessibilityPriority = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // On Android 10+, accessibility service is the best option for background monitoring
+            // Give it higher priority than system hooks which don't work well in background
+            SYSTEM_HOOKS_PRIORITY + 5 // Higher than system hooks on Android 10+
+        } else {
+            ACCESSIBILITY_SERVICE_PRIORITY
+        }
         strategies.add(
             MonitoringStrategy(
                 method = MonitoringMethod.ACCESSIBILITY_SERVICE,
-                priority = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    ACCESSIBILITY_SERVICE_PRIORITY + 10 // Higher priority on Android 10+
-                } else {
-                    ACCESSIBILITY_SERVICE_PRIORITY
-                },
+                priority = accessibilityPriority,
                 isAvailable = accessibilityAvailable,
                 capabilities = setOf(
                     MonitoringStrategy.Capability.BACKGROUND_ACCESS,
@@ -146,7 +180,7 @@ class MonitoringStrategyFactory @Inject constructor(
                 )
             )
         )
-        Log.d(TAG, "Accessibility service strategy available: $accessibilityAvailable")
+        Log.d(TAG, "Accessibility service strategy available: $accessibilityAvailable, priority: $accessibilityPriority (Android ${Build.VERSION.SDK_INT})")
         
         // Foreground service (reliable but requires persistent notification)
         strategies.add(

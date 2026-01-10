@@ -32,6 +32,8 @@ class AccessibilityPermissionManager(private val context: Context) {
             0
         }
         
+        Log.d(TAG, "Accessibility enabled system-wide: ${accessibilityEnabled == 1}")
+        
         if (accessibilityEnabled != 1) {
             Log.d(TAG, "Accessibility services are disabled system-wide")
             return false
@@ -42,17 +44,22 @@ class AccessibilityPermissionManager(private val context: Context) {
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         )
         
+        Log.d(TAG, "Enabled accessibility services: $enabledServices")
+        
         if (enabledServices.isNullOrEmpty()) {
             Log.d(TAG, "No accessibility services are enabled")
             return false
         }
         
         val serviceName = "${context.packageName}/${ClipboardAccessibilityService::class.java.name}"
+        Log.d(TAG, "Looking for service: $serviceName")
+        
         val colonSplitter = TextUtils.SimpleStringSplitter(':')
         colonSplitter.setString(enabledServices)
         
         while (colonSplitter.hasNext()) {
             val componentName = colonSplitter.next()
+            Log.d(TAG, "Checking component: $componentName")
             if (componentName.equals(serviceName, ignoreCase = true)) {
                 Log.d(TAG, "ClipboardAccessibilityService is enabled")
                 return true

@@ -74,6 +74,9 @@ android {
 }
 
 dependencies {
+    // Xposed API (compileOnly - provided by framework at runtime)
+    compileOnly("de.robv.android.xposed:api:82")
+    
     // Core Android
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

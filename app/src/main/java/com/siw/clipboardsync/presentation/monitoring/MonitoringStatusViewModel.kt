@@ -3,11 +3,14 @@ package com.siw.clipboardsync.presentation.monitoring
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.siw.clipboardsync.monitor.LatencyTracker
 import com.siw.clipboardsync.monitor.MonitoringStrategyFactory
 import com.siw.clipboardsync.monitor.model.MonitoringMethod
+import com.siw.clipboardsync.service.RootDetectionService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
@@ -29,7 +32,8 @@ import javax.inject.Inject
 class MonitoringStatusViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val monitoringStrategyFactory: MonitoringStrategyFactory,
-    private val latencyTracker: LatencyTracker
+    private val latencyTracker: LatencyTracker,
+    private val rootDetectionService: RootDetectionService
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(MonitoringStatusUiState())
@@ -74,11 +78,18 @@ class MonitoringStatusViewModel @Inject constructor(
                     } else null
                 }
                 
+                // Check if LSPosed is available but module not active
+                val rootCapabilities = rootDetectionService.getRootCapabilities()
+                val showLSPosedHint = rootCapabilities.hasXposedFramework && 
+                    currentMethod == MonitoringMethod.XPOSED_HOOKS &&
+                    !isLSPosedModuleActive()
+                
                 _uiState.update { state ->
                     state.copy(
                         availableMethods = availableMethods,
                         currentMethod = currentMethod,
                         latencyStats = latencyStats,
+                        showLSPosedSetupHint = showLSPosedHint,
                         isLoading = false
                     )
                 }
@@ -90,6 +101,61 @@ class MonitoringStatusViewModel @Inject constructor(
                         isLoading = false
                     )
                 }
+            }
+        }
+    }
+    
+    /**
+     * Checks if LSPosed module is active in system framework.
+     */
+    private fun isLSPosedModuleActive(): Boolean {
+        // Check if we're receiving broadcasts from the Xposed module
+        // This is a simple heuristic - if the module is active, it would have
+        // hooked the clipboard service and we'd see different behavior
+        return try {
+            // For now, we assume the module is not active if we're using polling
+            // A more sophisticated check would involve checking LSPosed's database
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    /**
+     * Opens LSPosed Manager app.
+     */
+    fun openLSPosedManager() {
+        try {
+            // Try to open LSPosed Manager
+            val lsposedPackages = listOf(
+                "org.lsposed.manager",
+                "com.android.shell" // LSPosed parasitic mode uses shell
+            )
+            
+            for (packageName in lsposedPackages) {
+                try {
+                    val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+                    if (intent != null) {
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(intent)
+                        return
+                    }
+                } catch (e: Exception) {
+                    // Try next package
+                }
+            }
+            
+            // If LSPosed Manager is not found (parasitic mode), show instructions
+            // The user needs to dial *#*#5776733#*#* or use other methods
+            _uiState.update { state ->
+                state.copy(
+                    error = "LSPosed Manager 可能处于寄生模式。请拨打 *#*#5776733#*#* 打开管理器，或在通知栏中查找 LSPosed 通知。"
+                )
+            }
+            
+        } catch (e: Exception) {
+            _uiState.update { state ->
+                state.copy(error = "无法打开 LSPosed Manager: ${e.message}")
             }
         }
     }
@@ -256,6 +322,7 @@ data class MonitoringStatusUiState(
     val testResult: TestResult? = null,
     val syncStats: SyncStats = SyncStats(),
     val latencyStats: LatencyDisplayStats? = null,
+    val showLSPosedSetupHint: Boolean = false,
     val isLoading: Boolean = true,
     val error: String? = null
 )

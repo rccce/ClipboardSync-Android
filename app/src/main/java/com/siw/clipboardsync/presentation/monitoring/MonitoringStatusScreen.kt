@@ -66,6 +66,15 @@ fun MonitoringStatusScreen(
                 )
             }
             
+            // LSPosed Setup Card (show when Xposed is detected but module not active)
+            if (uiState.showLSPosedSetupHint) {
+                item {
+                    LSPosedSetupCard(
+                        onOpenLSPosed = { viewModel.openLSPosedManager() }
+                    )
+                }
+            }
+            
             // Method Selection Card
             item {
                 MethodSelectionCard(
@@ -562,3 +571,91 @@ data class LatencyDisplayStats(
     val targetMs: Long,
     val meetsTarget: Boolean
 )
+
+/**
+ * Card showing LSPosed setup instructions.
+ */
+@Composable
+fun LSPosedSetupCard(
+    onOpenLSPosed: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "LSPosed 模块设置",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Text(
+                text = "检测到 LSPosed 框架，但模块尚未启用。请按以下步骤操作：",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Column(
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Text(
+                    text = "1. 打开 LSPosed Manager",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "2. 点击「模块」标签",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "3. 找到「Clipboard Sync」并启用",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "4. 在作用域中勾选「系统框架」",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = "5. 重启设备使模块生效",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Button(
+                onClick = onOpenLSPosed,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Settings, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("打开 LSPosed Manager")
+            }
+        }
+    }
+}

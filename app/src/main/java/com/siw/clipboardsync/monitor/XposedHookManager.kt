@@ -205,51 +205,99 @@ class XposedHookManager @Inject constructor(
      */
     private fun detectXposedFramework(): XposedFrameworkType {
         return try {
-            // Check for LSPosed first (modern framework)
-            try {
-                Class.forName(LSPOSED_API_CLASS)
-                Log.d(TAG, "LSPosed API detected")
+            // Method 1: Check for LSPosed manager app first (may be hidden)
+            if (isPackageInstalled("org.lsposed.manager")) {
+                Log.d(TAG, "LSPosed manager app detected")
                 return XposedFrameworkType.LSPOSED
-            } catch (e: ClassNotFoundException) {
-                // Not LSPosed API
             }
             
-            try {
-                Class.forName(LSPOSED_BRIDGE_CLASS)
-                Log.d(TAG, "LSPosed Bridge detected")
-                return XposedFrameworkType.LSPOSED
-            } catch (e: ClassNotFoundException) {
-                // Not LSPosed Bridge
+            // Method 2: Check for LSPosed module directories (with root)
+            val lsposedPaths = arrayOf(
+                "/data/adb/lspd",
+                "/data/adb/modules/zygisk_lsposed",
+                "/data/adb/modules/riru_lsposed"
+            )
+            for (path in lsposedPaths) {
+                // First try without root
+                if (java.io.File(path).exists()) {
+                    Log.d(TAG, "LSPosed path detected (direct): $path")
+                    return XposedFrameworkType.LSPOSED
+                }
+                // Try with root command using ls
+                if (checkPathExistsWithRoot(path)) {
+                    Log.d(TAG, "LSPosed path detected (via root): $path")
+                    return XposedFrameworkType.LSPOSED
+                }
             }
             
-            // Check for EdXposed
-            try {
-                Class.forName(EDXPOSED_BRIDGE_CLASS)
-                Log.d(TAG, "EdXposed detected")
+            // Method 3: Check LSPosed config database (via root)
+            if (checkPathExistsWithRoot("/data/adb/lspd/config/modules_config.db")) {
+                Log.d(TAG, "LSPosed config database detected")
+                return XposedFrameworkType.LSPOSED
+            }
+            
+            // Method 4: Check for EdXposed manager
+            if (isPackageInstalled("org.meowcat.edxposed.manager") || 
+                isPackageInstalled("com.solohsu.android.edxp.manager")) {
+                Log.d(TAG, "EdXposed manager detected")
                 return XposedFrameworkType.EDXPOSED
-            } catch (e: ClassNotFoundException) {
-                // Not EdXposed
             }
             
-            // Check for traditional Xposed
+            // Method 5: Check for traditional Xposed installer
+            if (isPackageInstalled("de.robv.android.xposed.installer")) {
+                Log.d(TAG, "Traditional Xposed installer detected")
+                return XposedFrameworkType.XPOSED
+            }
+            
+            // Method 6: Check for Xposed/LSPosed classes (only works if we're hooked)
             try {
-                Class.forName(XPOSED_BRIDGE_CLASS)
-                Log.d(TAG, "Traditional Xposed detected")
+                Class.forName("io.github.libxposed.api.XposedInterface")
+                Log.d(TAG, "LSPosed API class detected")
+                return XposedFrameworkType.LSPOSED
+            } catch (e: ClassNotFoundException) {
+                // Not loaded
+            }
+            
+            try {
+                Class.forName("de.robv.android.xposed.XposedBridge")
+                Log.d(TAG, "XposedBridge class detected")
                 return XposedFrameworkType.XPOSED
             } catch (e: ClassNotFoundException) {
-                // Not traditional Xposed
+                // Not loaded
             }
             
-            // Check for Xposed manager apps as fallback
-            if (isAnyXposedManagerInstalled()) {
-                Log.d(TAG, "Xposed manager app detected, assuming framework is available")
-                return XposedFrameworkType.XPOSED
+            // Method 7: Check system properties
+            try {
+                val xposedVersion = System.getProperty("xposed.version")
+                if (xposedVersion != null) {
+                    Log.d(TAG, "Xposed version property detected: $xposedVersion")
+                    return XposedFrameworkType.XPOSED
+                }
+            } catch (e: Exception) {
+                // Property not available
             }
             
+            Log.d(TAG, "No Xposed framework detected")
             XposedFrameworkType.NONE
         } catch (e: Exception) {
             Log.e(TAG, "Error detecting Xposed framework", e)
             XposedFrameworkType.NONE
+        }
+    }
+    
+    /**
+     * Check if a path exists using root command
+     */
+    private fun checkPathExistsWithRoot(path: String): Boolean {
+        return try {
+            // Use ls command which is more reliable than test
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ls $path"))
+            val exitCode = process.waitFor()
+            process.destroy()
+            exitCode == 0
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking path with root: $path", e)
+            false
         }
     }
     
