@@ -46,7 +46,7 @@ fun PermissionRequestDialog(
                         PermissionType.ACCESSIBILITY -> Icons.Default.Settings
                         PermissionType.NOTIFICATION -> Icons.Default.Notifications
                         PermissionType.OVERLAY -> Icons.Default.Info
-                        PermissionType.READ_LOGS -> Icons.Default.Description
+                        PermissionType.READ_LOGS -> Icons.Default.List
                     },
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,

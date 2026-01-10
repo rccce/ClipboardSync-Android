@@ -59,7 +59,7 @@ fun MonitoringStatusScreen(
         ) {
             // Current Status Card
             item {
-                CurrentStatusCard(
+                StatusCurrentStatusCard(
                     isMonitoring = uiState.isMonitoring,
                     currentMethod = uiState.currentMethod,
                     onToggleMonitoring = { viewModel.toggleMonitoring() }
@@ -106,7 +106,7 @@ fun MonitoringStatusScreen(
  * Requirements: 11.1, 11.2
  */
 @Composable
-fun CurrentStatusCard(
+private fun StatusCurrentStatusCard(
     isMonitoring: Boolean,
     currentMethod: MonitoringMethod?,
     onToggleMonitoring: () -> Unit
@@ -148,7 +148,7 @@ fun CurrentStatusCard(
             
             currentMethod?.let { method ->
                 Text(
-                    text = "当前方法: ${getMethodDisplayName(method)}",
+                    text = "当前方法: ${getStatusMethodDisplayName(method)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -225,7 +225,7 @@ fun MethodItem(
             Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Text(
-                    text = getMethodDisplayName(methodInfo.method),
+                    text = getStatusMethodDisplayName(methodInfo.method),
                     style = MaterialTheme.typography.bodyLarge,
                     color = if (methodInfo.isAvailable) 
                         MaterialTheme.colorScheme.onSurface 
@@ -323,7 +323,7 @@ fun TestFunctionCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = if (result.success) Icons.Default.CheckCircle else Icons.Default.Error,
+                        imageVector = if (result.success) Icons.Default.CheckCircle else Icons.Default.Close,
                         contentDescription = null,
                         tint = if (result.success) Color.Green else Color.Red
                     )
@@ -511,7 +511,7 @@ fun LatencyCard(
 }
 
 // Helper functions
-fun getMethodDisplayName(method: MonitoringMethod): String {
+private fun getStatusMethodDisplayName(method: MonitoringMethod): String {
     return when (method) {
         MonitoringMethod.SYSTEM_HOOKS -> "系统钩子 (Root)"
         MonitoringMethod.XPOSED_HOOKS -> "Xposed 框架"
@@ -522,12 +522,12 @@ fun getMethodDisplayName(method: MonitoringMethod): String {
     }
 }
 
-fun getMethodIcon(method: MonitoringMethod): ImageVector {
+private fun getMethodIcon(method: MonitoringMethod): ImageVector {
     return when (method) {
-        MonitoringMethod.SYSTEM_HOOKS -> Icons.Default.Security
-        MonitoringMethod.XPOSED_HOOKS -> Icons.Default.Extension
-        MonitoringMethod.READ_LOGS -> Icons.Default.Description
-        MonitoringMethod.ACCESSIBILITY_SERVICE -> Icons.Default.Accessibility
+        MonitoringMethod.SYSTEM_HOOKS -> Icons.Default.Lock
+        MonitoringMethod.XPOSED_HOOKS -> Icons.Default.Build
+        MonitoringMethod.READ_LOGS -> Icons.Default.List
+        MonitoringMethod.ACCESSIBILITY_SERVICE -> Icons.Default.Person
         MonitoringMethod.FOREGROUND_SERVICE -> Icons.Default.Notifications
         MonitoringMethod.POLLING_FALLBACK -> Icons.Default.Refresh
     }
