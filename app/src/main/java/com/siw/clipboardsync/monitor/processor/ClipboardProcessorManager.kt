@@ -1,14 +1,21 @@
 package com.siw.clipboardsync.monitor.processor
 
 import android.content.Context
+import android.util.Log
 import com.siw.clipboardsync.monitor.model.ClipboardContent
 import com.siw.clipboardsync.monitor.model.ClipboardError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Central manager for clipboard content processing.
- * Handles content type detection, processor selection, and processing coordination.
+ * Handles content type detection, processor selection, processing coordination,
+ * deduplication, and debouncing.
+ * 
+ * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
  */
 class ClipboardProcessorManager(private val context: Context) {
     
@@ -20,18 +27,44 @@ class ClipboardProcessorManager(private val context: Context) {
     
     private val notificationHandler = ProcessingNotificationHandler(context)
     
+    // Deduplication tracking
+    private val contentHashCache = ConcurrentHashMap<String, Long>() // hash -> timestamp
+    private val maxCacheSize = 100
+    private val deduplicationWindowMs = 5000L // 5 seconds
+    
+    // Debounce tracking
+    private val lastProcessedTimestamp = AtomicLong(0)
+    private val debounceWindowMs = 200L // 200ms debounce window
+    
     companion object {
+        private const val TAG = "ClipboardProcessorManager"
         private const val DEFAULT_MAX_SIZE = 10 * 1024 * 1024L // 10MB default limit
     }
     
     /**
      * Processes clipboard content using the most appropriate processor.
+     * Includes deduplication and debouncing.
      * @param content The clipboard content to process
      * @return ProcessingResult containing the processed content or error
      */
     suspend fun processContent(content: ClipboardContent): ProcessingResult {
         return withContext(Dispatchers.IO) {
             try {
+                // Check debounce
+                if (shouldDebounce(content.timestamp)) {
+                    Log.d(TAG, "Content debounced - too soon after last processing")
+                    return@withContext ProcessingResult.Debounced(content)
+                }
+                
+                // Check deduplication
+                if (isDuplicate(content)) {
+                    Log.d(TAG, "Content deduplicated - same content recently processed")
+                    return@withContext ProcessingResult.Deduplicated(content)
+                }
+                
+                // Update last processed timestamp
+                lastProcessedTimestamp.set(content.timestamp)
+                
                 // Detect content type if unknown
                 val detectedContent = if (content.type == ClipboardContent.ContentType.UNKNOWN) {
                     detectAndUpdateContentType(content)
@@ -53,16 +86,106 @@ class ClipboardProcessorManager(private val context: Context) {
                 // Process the content
                 val result = processor.process(detectedContent)
                 
+                // Record content hash for deduplication
+                recordContentHash(content)
+                
                 // Handle the result and show appropriate notifications
                 handleProcessingResult(result, processor)
                 
                 result
                 
             } catch (e: Exception) {
+                Log.e(TAG, "Error processing content", e)
                 val error = ClipboardError.UnknownError(e)
                 ProcessingResult.Failure(error, content)
             }
         }
+    }
+    
+    /**
+     * Checks if content should be debounced (too soon after last processing).
+     * Requirements: 8.5
+     */
+    private fun shouldDebounce(timestamp: Long): Boolean {
+        val lastTimestamp = lastProcessedTimestamp.get()
+        if (lastTimestamp == 0L) return false
+        
+        val timeSinceLastProcess = timestamp - lastTimestamp
+        return timeSinceLastProcess < debounceWindowMs
+    }
+    
+    /**
+     * Checks if content is a duplicate of recently processed content.
+     * Requirements: 8.4
+     */
+    private fun isDuplicate(content: ClipboardContent): Boolean {
+        val hash = computeContentHash(content)
+        val cachedTimestamp = contentHashCache[hash]
+        
+        if (cachedTimestamp == null) return false
+        
+        val timeSinceLastSeen = content.timestamp - cachedTimestamp
+        return timeSinceLastSeen < deduplicationWindowMs
+    }
+    
+    /**
+     * Records content hash for deduplication tracking.
+     */
+    private fun recordContentHash(content: ClipboardContent) {
+        val hash = computeContentHash(content)
+        contentHashCache[hash] = content.timestamp
+        
+        // Clean up old entries if cache is too large
+        if (contentHashCache.size > maxCacheSize) {
+            cleanupHashCache()
+        }
+    }
+    
+    /**
+     * Computes a hash of the content for deduplication.
+     */
+    private fun computeContentHash(content: ClipboardContent): String {
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            digest.update(content.data)
+            digest.update(content.mimeType.toByteArray())
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            // Fallback to simple hash
+            "${content.data.contentHashCode()}_${content.mimeType}"
+        }
+    }
+    
+    /**
+     * Cleans up old entries from the hash cache.
+     */
+    private fun cleanupHashCache() {
+        val now = System.currentTimeMillis()
+        val expiredThreshold = now - deduplicationWindowMs * 2
+        
+        contentHashCache.entries.removeIf { entry ->
+            entry.value < expiredThreshold
+        }
+    }
+    
+    /**
+     * Clears the deduplication cache.
+     */
+    fun clearDeduplicationCache() {
+        contentHashCache.clear()
+        lastProcessedTimestamp.set(0)
+    }
+    
+    /**
+     * Gets deduplication statistics.
+     */
+    fun getDeduplicationStats(): DeduplicationStats {
+        return DeduplicationStats(
+            cacheSize = contentHashCache.size,
+            maxCacheSize = maxCacheSize,
+            deduplicationWindowMs = deduplicationWindowMs,
+            debounceWindowMs = debounceWindowMs
+        )
     }
     
     /**

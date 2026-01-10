@@ -3,8 +3,10 @@ package com.siw.clipboardsync.monitor
 import android.content.Context
 import android.util.Log
 import com.siw.clipboardsync.monitor.model.ClipboardContent
+import com.siw.clipboardsync.monitor.parser.ClipboardServiceParser
 import com.siw.clipboardsync.service.RootDetectionService
 import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,6 +23,9 @@ class NativeHookManager @Inject constructor(
     
     companion object {
         private const val TAG = "NativeHookManager"
+        private const val DEFAULT_POLL_INTERVAL_MS = 1000L
+        private const val ERROR_POLL_INTERVAL_MS = 2000L
+        private const val MAX_CONSECUTIVE_ERRORS = 5
     }
     
     private var nativeClipboardHook: NativeClipboardHook? = null
@@ -31,6 +36,10 @@ class NativeHookManager @Inject constructor(
     private var kernelSuMonitoringJob: kotlinx.coroutines.Job? = null
     private var lastClipboardContent: String? = null
     private val coroutineScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+    
+    // Error tracking
+    private var consecutiveErrors = 0
+    private var lastSuccessfulMethod: String? = null
     
     /**
      * Checks if native hooks are available on this device.
@@ -198,16 +207,18 @@ class NativeHookManager @Inject constructor(
         return try {
             // Try multiple approaches to get clipboard content with root access
             
-            // Approach 1: Try to read clipboard through system service
+            // Approach 1: Try to read clipboard through service call (most reliable)
             try {
-                val process = Runtime.getRuntime().exec("su -c 'service call clipboard 2'")
+                val process = Runtime.getRuntime().exec("su -c 'service call clipboard 2 s16 com.android.shell'")
                 val exitCode = process.waitFor()
                 
                 if (exitCode == 0) {
                     val output = process.inputStream.bufferedReader().readText()
-                    val parsed = parseClipboardServiceOutput(output)
-                    if (parsed != null && parsed.isNotEmpty()) {
-                        return parsed
+                    val parseResult = ClipboardServiceParser.parseServiceCallOutput(output)
+                    if (parseResult.success && !parseResult.content.isNullOrEmpty()) {
+                        Log.d(TAG, "Got clipboard via service call (${parseResult.parseMethod}): ${parseResult.content.take(50)}")
+                        process.destroy()
+                        return parseResult.content
                     }
                 }
                 process.destroy()
@@ -215,16 +226,37 @@ class NativeHookManager @Inject constructor(
                 Log.w(TAG, "Service call approach failed", e)
             }
             
-            // Approach 2: Try to access clipboard through dumpsys
+            // Approach 2: Try alternative service call format
+            try {
+                val process = Runtime.getRuntime().exec("su -c 'service call clipboard 2'")
+                val exitCode = process.waitFor()
+                
+                if (exitCode == 0) {
+                    val output = process.inputStream.bufferedReader().readText()
+                    val parseResult = ClipboardServiceParser.parseServiceCallOutput(output)
+                    if (parseResult.success && !parseResult.content.isNullOrEmpty()) {
+                        Log.d(TAG, "Got clipboard via service call alt (${parseResult.parseMethod}): ${parseResult.content.take(50)}")
+                        process.destroy()
+                        return parseResult.content
+                    }
+                }
+                process.destroy()
+            } catch (e: Exception) {
+                Log.w(TAG, "Service call alt approach failed", e)
+            }
+            
+            // Approach 3: Try to access clipboard through dumpsys
             try {
                 val process = Runtime.getRuntime().exec("su -c 'dumpsys clipboard'")
                 val exitCode = process.waitFor()
                 
                 if (exitCode == 0) {
                     val output = process.inputStream.bufferedReader().readText()
-                    val parsed = parseClipboardDumpsysOutput(output)
-                    if (parsed != null && parsed.isNotEmpty()) {
-                        return parsed
+                    val parseResult = ClipboardServiceParser.parseDumpsysOutput(output)
+                    if (parseResult.success && !parseResult.content.isNullOrEmpty()) {
+                        Log.d(TAG, "Got clipboard via dumpsys (${parseResult.parseMethod}): ${parseResult.content.take(50)}")
+                        process.destroy()
+                        return parseResult.content
                     }
                 }
                 process.destroy()
@@ -232,7 +264,26 @@ class NativeHookManager @Inject constructor(
                 Log.w(TAG, "Dumpsys approach failed", e)
             }
             
-            // Approach 3: Fallback to regular clipboard access (may not work in background)
+            // Approach 4: Try content provider query
+            try {
+                val process = Runtime.getRuntime().exec("su -c 'content query --uri content://clipboard/text'")
+                val exitCode = process.waitFor()
+                
+                if (exitCode == 0) {
+                    val output = process.inputStream.bufferedReader().readText()
+                    val parseResult = ClipboardServiceParser.parseContentQueryOutput(output)
+                    if (parseResult.success && !parseResult.content.isNullOrEmpty()) {
+                        Log.d(TAG, "Got clipboard via content query (${parseResult.parseMethod}): ${parseResult.content.take(50)}")
+                        process.destroy()
+                        return parseResult.content
+                    }
+                }
+                process.destroy()
+            } catch (e: Exception) {
+                Log.w(TAG, "Content query approach failed", e)
+            }
+            
+            // Approach 5: Fallback to regular clipboard access (may not work in background)
             try {
                 val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 return clipboardManager.primaryClip?.getItemAt(0)?.text?.toString()
@@ -249,50 +300,20 @@ class NativeHookManager @Inject constructor(
     
     /**
      * Parse clipboard dumpsys output to extract text content
+     * @deprecated Use ClipboardServiceParser.parseDumpsysOutput instead
      */
+    @Deprecated("Use ClipboardServiceParser.parseDumpsysOutput instead", ReplaceWith("ClipboardServiceParser.parseDumpsysOutput(output)"))
     private fun parseClipboardDumpsysOutput(output: String): String? {
-        return try {
-            // Look for clipboard content in dumpsys output
-            val lines = output.split("\n")
-            for (line in lines) {
-                if (line.contains("ClipData") || line.contains("text/plain")) {
-                    // Try to extract text content
-                    val textMatch = Regex("\"([^\"]+)\"").find(line)
-                    if (textMatch != null) {
-                        return textMatch.groupValues[1]
-                    }
-                }
-            }
-            null
-        } catch (e: Exception) {
-            Log.w(TAG, "Error parsing dumpsys output", e)
-            null
-        }
+        return ClipboardServiceParser.parseDumpsysOutput(output).content
     }
     
     /**
      * Parse clipboard service output to extract text content
+     * @deprecated Use ClipboardServiceParser.parseServiceCallOutput instead
      */
+    @Deprecated("Use ClipboardServiceParser.parseServiceCallOutput instead", ReplaceWith("ClipboardServiceParser.parseServiceCallOutput(output)"))
     private fun parseClipboardServiceOutput(output: String): String? {
-        return try {
-            // The service call output contains clipboard data in a specific format
-            // We need to extract the text content from it
-            val lines = output.split("\n")
-            for (line in lines) {
-                if (line.contains("'") && line.length > 10) {
-                    // Extract text between quotes
-                    val startIndex = line.indexOf("'")
-                    val endIndex = line.lastIndexOf("'")
-                    if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
-                        return line.substring(startIndex + 1, endIndex)
-                    }
-                }
-            }
-            null
-        } catch (e: Exception) {
-            Log.w(TAG, "Error parsing clipboard service output", e)
-            null
-        }
+        return ClipboardServiceParser.parseServiceCallOutput(output).content
     }
     
     /**
@@ -301,6 +322,7 @@ class NativeHookManager @Inject constructor(
     private fun startRootBasedClipboardMonitoring() {
         kernelSuMonitoringJob = coroutineScope.launch {
             var pollCount = 0
+            consecutiveErrors = 0
             Log.i(TAG, "Starting KernelSU root-based clipboard monitoring")
             
             // Monitor clipboard using root access
@@ -318,18 +340,28 @@ class NativeHookManager @Inject constructor(
                         Log.i(TAG, "KernelSU detected clipboard change via root: ${currentContent.take(50)}...")
                         Log.i(TAG, "Previous content was: ${lastClipboardContent?.take(50)}")
                         lastClipboardContent = currentContent
+                        consecutiveErrors = 0 // Reset error count on success
                         
                         // Notify callback
                         Log.i(TAG, "Invoking clipboard callback for KernelSU root change")
                         clipboardCallback?.invoke(currentContent)
+                    } else if (currentContent != null) {
+                        consecutiveErrors = 0 // Reset error count on successful read (even if no change)
                     }
                     
                     // Poll every 1 second for root-based monitoring
-                    kotlinx.coroutines.delay(1000)
+                    kotlinx.coroutines.delay(DEFAULT_POLL_INTERVAL_MS)
                     
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error in KernelSU root clipboard monitoring", e)
-                    kotlinx.coroutines.delay(2000) // Wait longer on error
+                    consecutiveErrors++
+                    Log.e(TAG, "Error in KernelSU root clipboard monitoring (error #$consecutiveErrors)", e)
+                    
+                    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                        Log.e(TAG, "Too many consecutive errors, stopping root-based monitoring")
+                        break
+                    }
+                    
+                    kotlinx.coroutines.delay(ERROR_POLL_INTERVAL_MS) // Wait longer on error
                 }
             }
             
@@ -478,7 +510,10 @@ class NativeHookManager @Inject constructor(
                 "available" to hook.isNativeLibraryAvailable(),
                 "initialized" to isInitialized,
                 "monitoring" to hook.isMonitoringActive(),
-                "libraryName" to "clipboardhook"
+                "libraryName" to "clipboardhook",
+                "consecutiveErrors" to consecutiveErrors,
+                "lastSuccessfulMethod" to (lastSuccessfulMethod ?: "none"),
+                "kernelSuMonitoringActive" to (kernelSuMonitoringJob?.isActive ?: false)
             )
         } catch (e: Exception) {
             mapOf(
@@ -486,5 +521,103 @@ class NativeHookManager @Inject constructor(
                 "error" to (e.message ?: "Unknown error")
             )
         }
+    }
+    
+    /**
+     * Tests clipboard access using all available methods and returns detailed results.
+     * Useful for debugging and verifying root-based clipboard access.
+     */
+    suspend fun testClipboardAccess(): Map<String, Any> = withContext(Dispatchers.IO) {
+        val results = mutableMapOf<String, Any>()
+        
+        // Test service call with package name
+        try {
+            val process1 = Runtime.getRuntime().exec("su -c 'service call clipboard 2 s16 com.android.shell'")
+            val exitCode1 = process1.waitFor()
+            val output1 = process1.inputStream.bufferedReader().readText()
+            process1.destroy()
+            
+            val parseResult1 = ClipboardServiceParser.parseServiceCallOutput(output1)
+            results["serviceCallWithPackage"] = mapOf(
+                "exitCode" to exitCode1,
+                "success" to parseResult1.success,
+                "content" to (parseResult1.content?.take(100) ?: "null"),
+                "parseMethod" to (parseResult1.parseMethod ?: "none"),
+                "error" to (parseResult1.error ?: "none")
+            )
+        } catch (e: Exception) {
+            results["serviceCallWithPackage"] = mapOf("error" to e.message)
+        }
+        
+        // Test service call without package name
+        try {
+            val process2 = Runtime.getRuntime().exec("su -c 'service call clipboard 2'")
+            val exitCode2 = process2.waitFor()
+            val output2 = process2.inputStream.bufferedReader().readText()
+            process2.destroy()
+            
+            val parseResult2 = ClipboardServiceParser.parseServiceCallOutput(output2)
+            results["serviceCallSimple"] = mapOf(
+                "exitCode" to exitCode2,
+                "success" to parseResult2.success,
+                "content" to (parseResult2.content?.take(100) ?: "null"),
+                "parseMethod" to (parseResult2.parseMethod ?: "none"),
+                "error" to (parseResult2.error ?: "none")
+            )
+        } catch (e: Exception) {
+            results["serviceCallSimple"] = mapOf("error" to e.message)
+        }
+        
+        // Test dumpsys
+        try {
+            val process3 = Runtime.getRuntime().exec("su -c 'dumpsys clipboard'")
+            val exitCode3 = process3.waitFor()
+            val output3 = process3.inputStream.bufferedReader().readText()
+            process3.destroy()
+            
+            val parseResult3 = ClipboardServiceParser.parseDumpsysOutput(output3)
+            results["dumpsys"] = mapOf(
+                "exitCode" to exitCode3,
+                "success" to parseResult3.success,
+                "content" to (parseResult3.content?.take(100) ?: "null"),
+                "parseMethod" to (parseResult3.parseMethod ?: "none"),
+                "error" to (parseResult3.error ?: "none")
+            )
+        } catch (e: Exception) {
+            results["dumpsys"] = mapOf("error" to e.message)
+        }
+        
+        // Test content query
+        try {
+            val process4 = Runtime.getRuntime().exec("su -c 'content query --uri content://clipboard/text'")
+            val exitCode4 = process4.waitFor()
+            val output4 = process4.inputStream.bufferedReader().readText()
+            process4.destroy()
+            
+            val parseResult4 = ClipboardServiceParser.parseContentQueryOutput(output4)
+            results["contentQuery"] = mapOf(
+                "exitCode" to exitCode4,
+                "success" to parseResult4.success,
+                "content" to (parseResult4.content?.take(100) ?: "null"),
+                "parseMethod" to (parseResult4.parseMethod ?: "none"),
+                "error" to (parseResult4.error ?: "none")
+            )
+        } catch (e: Exception) {
+            results["contentQuery"] = mapOf("error" to e.message)
+        }
+        
+        // Test regular clipboard access
+        try {
+            val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val content = clipboardManager.primaryClip?.getItemAt(0)?.text?.toString()
+            results["regularAccess"] = mapOf(
+                "success" to (content != null),
+                "content" to (content?.take(100) ?: "null")
+            )
+        } catch (e: Exception) {
+            results["regularAccess"] = mapOf("error" to e.message)
+        }
+        
+        return@withContext results
     }
 }

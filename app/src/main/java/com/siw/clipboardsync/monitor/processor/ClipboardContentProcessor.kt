@@ -56,6 +56,8 @@ interface ClipboardContentProcessor {
 
 /**
  * Result of content processing operation.
+ * 
+ * Requirements: 8.4, 8.5
  */
 sealed class ProcessingResult {
     data class Success(
@@ -73,7 +75,33 @@ sealed class ProcessingResult {
         val maxSize: Long,
         val originalContent: ClipboardContent
     ) : ProcessingResult()
+    
+    /**
+     * Content was deduplicated (same content recently processed).
+     * Requirements: 8.4
+     */
+    data class Deduplicated(
+        val originalContent: ClipboardContent
+    ) : ProcessingResult()
+    
+    /**
+     * Content was debounced (too soon after last processing).
+     * Requirements: 8.5
+     */
+    data class Debounced(
+        val originalContent: ClipboardContent
+    ) : ProcessingResult()
 }
+
+/**
+ * Statistics for deduplication tracking.
+ */
+data class DeduplicationStats(
+    val cacheSize: Int,
+    val maxCacheSize: Int,
+    val deduplicationWindowMs: Long,
+    val debounceWindowMs: Long
+)
 
 /**
  * Result of content validation.

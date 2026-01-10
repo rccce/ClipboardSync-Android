@@ -1,8 +1,11 @@
 package com.siw.clipboardsync.monitor
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.monitor.model.MonitoringStrategy
 import com.siw.clipboardsync.service.RootDetectionService
@@ -28,9 +31,15 @@ class MonitoringStrategyFactory @Inject constructor(
         // Priority values for different monitoring methods (higher = better)
         private const val SYSTEM_HOOKS_PRIORITY = 100
         private const val XPOSED_HOOKS_PRIORITY = 90
+        private const val READ_LOGS_PRIORITY = 85
         private const val ACCESSIBILITY_SERVICE_PRIORITY = 70
         private const val FOREGROUND_SERVICE_PRIORITY = 50
         private const val POLLING_FALLBACK_PRIORITY = 10
+        
+        // SharedPreferences keys for state persistence
+        private const val PREFS_NAME = "monitoring_strategy_prefs"
+        private const val KEY_LAST_STRATEGY = "last_successful_strategy"
+        private const val KEY_LAST_STRATEGY_TIME = "last_strategy_timestamp"
     }
     
     private val accessibilityPermissionManager = AccessibilityPermissionManager(context)
@@ -84,6 +93,39 @@ class MonitoringStrategyFactory @Inject constructor(
                 )
             )
             Log.d(TAG, "Xposed hooks strategy available")
+        }
+        
+        // READ_LOGS permission-based monitoring
+        val readLogsAvailable = isReadLogsPermissionGranted()
+        if (readLogsAvailable) {
+            strategies.add(
+                MonitoringStrategy(
+                    method = MonitoringMethod.READ_LOGS,
+                    priority = READ_LOGS_PRIORITY,
+                    isAvailable = true,
+                    capabilities = setOf(
+                        MonitoringStrategy.Capability.BACKGROUND_ACCESS,
+                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
+                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES
+                    )
+                )
+            )
+            Log.d(TAG, "READ_LOGS strategy available")
+        } else {
+            // Add as unavailable option so users know it exists
+            strategies.add(
+                MonitoringStrategy(
+                    method = MonitoringMethod.READ_LOGS,
+                    priority = READ_LOGS_PRIORITY,
+                    isAvailable = false,
+                    capabilities = setOf(
+                        MonitoringStrategy.Capability.BACKGROUND_ACCESS,
+                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
+                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES
+                    )
+                )
+            )
+            Log.d(TAG, "READ_LOGS strategy NOT available - permission not granted")
         }
         
         // Accessibility service (good for Android 10+ non-root devices)
@@ -193,6 +235,123 @@ class MonitoringStrategyFactory @Inject constructor(
     }
     
     /**
+     * Executes the fallback chain with exponential backoff retry logic.
+     * Tries each strategy in order, with retries on failure.
+     * 
+     * @param onStrategySelected callback when a strategy is selected and ready
+     * @param onStrategyFailed callback when a strategy fails (before trying next)
+     * @param maxRetries maximum retries per strategy (default 3)
+     * @param initialDelayMs initial delay between retries in milliseconds (default 1000)
+     * @return the successfully activated strategy, or null if all failed
+     */
+    suspend fun executeFallbackChain(
+        onStrategySelected: suspend (MonitoringStrategy) -> Boolean,
+        onStrategyFailed: suspend (MonitoringStrategy, Exception, Int) -> Unit = { _, _, _ -> },
+        maxRetries: Int = 3,
+        initialDelayMs: Long = 1000
+    ): MonitoringStrategy? {
+        val fallbackChain = createFallbackChain()
+        
+        for (strategy in fallbackChain) {
+            var lastException: Exception? = null
+            
+            for (attempt in 1..maxRetries) {
+                try {
+                    Log.d(TAG, "Attempting strategy ${strategy.method.name} (attempt $attempt/$maxRetries)")
+                    
+                    val success = onStrategySelected(strategy)
+                    if (success) {
+                        Log.i(TAG, "Strategy ${strategy.method.name} activated successfully on attempt $attempt")
+                        saveLastSuccessfulStrategy(strategy.method)
+                        return strategy
+                    } else {
+                        throw IllegalStateException("Strategy activation returned false")
+                    }
+                    
+                } catch (e: Exception) {
+                    lastException = e
+                    Log.w(TAG, "Strategy ${strategy.method.name} failed on attempt $attempt: ${e.message}")
+                    
+                    onStrategyFailed(strategy, e, attempt)
+                    
+                    if (attempt < maxRetries) {
+                        // Exponential backoff: delay = initialDelay * 2^(attempt-1)
+                        val delayMs = initialDelayMs * (1 shl (attempt - 1))
+                        Log.d(TAG, "Waiting ${delayMs}ms before retry...")
+                        kotlinx.coroutines.delay(delayMs)
+                    }
+                }
+            }
+            
+            Log.w(TAG, "Strategy ${strategy.method.name} exhausted all retries, moving to next strategy")
+        }
+        
+        Log.e(TAG, "All strategies in fallback chain failed")
+        return null
+    }
+    
+    /**
+     * Saves the last successfully used strategy for state persistence.
+     */
+    private fun saveLastSuccessfulStrategy(method: MonitoringMethod) {
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString(KEY_LAST_STRATEGY, method.name)
+                .putLong(KEY_LAST_STRATEGY_TIME, System.currentTimeMillis())
+                .apply()
+            Log.d(TAG, "Saved last successful strategy: ${method.name}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to save last successful strategy", e)
+        }
+    }
+    
+    /**
+     * Gets the last successfully used strategy from persistence.
+     * @return the last successful method, or null if none saved
+     */
+    fun getLastSuccessfulStrategy(): MonitoringMethod? {
+        return try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val methodName = prefs.getString(KEY_LAST_STRATEGY, null)
+            methodName?.let { MonitoringMethod.valueOf(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get last successful strategy", e)
+            null
+        }
+    }
+    
+    /**
+     * Creates a prioritized fallback chain that starts with the last successful strategy.
+     * This improves startup time by trying the known-working method first.
+     * 
+     * @return ordered list of strategies with last successful strategy first (if still available)
+     */
+    suspend fun createOptimizedFallbackChain(): List<MonitoringStrategy> {
+        val standardChain = createFallbackChain()
+        val lastSuccessful = getLastSuccessfulStrategy()
+        
+        if (lastSuccessful == null) {
+            return standardChain
+        }
+        
+        // Find the last successful strategy in the chain
+        val lastSuccessfulStrategy = standardChain.find { it.method == lastSuccessful }
+        
+        if (lastSuccessfulStrategy == null || !lastSuccessfulStrategy.isAvailable) {
+            Log.d(TAG, "Last successful strategy $lastSuccessful is no longer available")
+            return standardChain
+        }
+        
+        // Move the last successful strategy to the front
+        val optimizedChain = mutableListOf(lastSuccessfulStrategy)
+        optimizedChain.addAll(standardChain.filter { it.method != lastSuccessful })
+        
+        Log.d(TAG, "Created optimized fallback chain starting with last successful: ${lastSuccessful.name}")
+        return optimizedChain
+    }
+    
+    /**
      * Evaluates if a specific monitoring method is available on this device.
      * @param method the monitoring method to check
      * @return true if the method is available, false otherwise
@@ -207,11 +366,29 @@ class MonitoringStrategyFactory @Inject constructor(
                 val capabilities = rootDetectionService.getRootCapabilities()
                 capabilities.hasXposedFramework
             }
+            MonitoringMethod.READ_LOGS -> {
+                isReadLogsPermissionGranted()
+            }
             MonitoringMethod.ACCESSIBILITY_SERVICE -> {
                 accessibilityPermissionManager.isAccessibilityServiceEnabled()
             }
             MonitoringMethod.FOREGROUND_SERVICE -> true // Always available
             MonitoringMethod.POLLING_FALLBACK -> true // Always available
+        }
+    }
+    
+    /**
+     * Checks if READ_LOGS permission is granted.
+     */
+    private fun isReadLogsPermissionGranted(): Boolean {
+        return try {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_LOGS
+            ) == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking READ_LOGS permission", e)
+            false
         }
     }
     
@@ -230,6 +407,7 @@ class MonitoringStrategyFactory @Inject constructor(
             "has_xposed_framework" to rootCapabilities.hasXposedFramework,
             "has_native_access" to rootCapabilities.hasNativeAccess,
             "root_method" to rootCapabilities.rootMethod.name,
+            "has_read_logs_permission" to isReadLogsPermissionGranted(),
             "accessibility_service_enabled" to accessibilityPermissionManager.isAccessibilityServiceEnabled(),
             "accessibility_service_running" to accessibilityPermissionManager.isServiceActiveAndMonitoring(),
             "device_manufacturer" to Build.MANUFACTURER,

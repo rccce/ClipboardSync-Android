@@ -270,6 +270,7 @@ class ErrorNotificationManager @Inject constructor(
         val methodName = when (method) {
             MonitoringMethod.SYSTEM_HOOKS -> "System Hooks"
             MonitoringMethod.XPOSED_HOOKS -> "Xposed Framework"
+            MonitoringMethod.READ_LOGS -> "READ_LOGS Permission"
             MonitoringMethod.ACCESSIBILITY_SERVICE -> "Accessibility Service"
             MonitoringMethod.FOREGROUND_SERVICE -> "Foreground Service"
             MonitoringMethod.POLLING_FALLBACK -> "Polling Fallback"
@@ -286,6 +287,51 @@ class ErrorNotificationManager @Inject constructor(
             .build()
         
         notificationManager.notify(NOTIFICATION_ID_RECOVERY, notification)
+    }
+    
+    /**
+     * Shows notification for persistent failures.
+     * Requirements: 10.3
+     */
+    fun showPersistentFailureNotification(
+        errorCount: Int,
+        lastError: com.siw.clipboardsync.monitor.model.ClipboardError,
+        lastMethod: MonitoringMethod
+    ) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        val methodName = when (lastMethod) {
+            MonitoringMethod.SYSTEM_HOOKS -> "System Hooks"
+            MonitoringMethod.XPOSED_HOOKS -> "Xposed Framework"
+            MonitoringMethod.READ_LOGS -> "READ_LOGS Permission"
+            MonitoringMethod.ACCESSIBILITY_SERVICE -> "Accessibility Service"
+            MonitoringMethod.FOREGROUND_SERVICE -> "Foreground Service"
+            MonitoringMethod.POLLING_FALLBACK -> "Polling Fallback"
+        }
+        
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID_ERROR)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Persistent Clipboard Monitoring Issues")
+            .setContentText("$errorCount consecutive errors detected")
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("Clipboard monitoring has encountered $errorCount consecutive errors using $methodName. Last error: ${lastError.getUserFriendlyMessage()}. Please check your device settings or restart the app."))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .addAction(
+                android.R.drawable.ic_menu_revert,
+                "Open App",
+                pendingIntent
+            )
+            .build()
+        
+        notificationManager.notify(NOTIFICATION_ID_ERROR, notification)
     }
     
     fun showRecoveryFailedNotification() {

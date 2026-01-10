@@ -2,7 +2,9 @@ package com.siw.clipboardsync.monitor.error
 
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.provider.Settings
+import android.util.Log
 import com.siw.clipboardsync.monitor.model.ClipboardError
 import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.monitor.ClipboardMonitor
@@ -19,6 +21,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Handles clipboard monitoring errors with retry logic, fallback chain,
+ * and state persistence.
+ * 
+ * Requirements: 10.1, 10.2, 10.3, 10.4
+ */
 @Singleton
 class ClipboardErrorHandler @Inject constructor(
     private val context: Context,
@@ -26,9 +34,26 @@ class ClipboardErrorHandler @Inject constructor(
     private val accessibilityPermissionManager: AccessibilityPermissionManager,
     private val notificationManager: ErrorNotificationManager
 ) {
+    companion object {
+        private const val TAG = "ClipboardErrorHandler"
+        private const val PREFS_NAME = "clipboard_error_handler_prefs"
+        private const val KEY_LAST_METHOD = "last_successful_method"
+        private const val KEY_LAST_ERROR = "last_error_type"
+        private const val KEY_ERROR_COUNT = "error_count"
+        private const val KEY_LAST_ERROR_TIME = "last_error_time"
+        private const val KEY_MONITORING_STATE = "monitoring_state"
+        
+        private const val RECOVERY_TIMEOUT_MS = 5000L
+        private const val MAX_RECOVERY_ATTEMPTS = 3
+        private const val INITIAL_RETRY_DELAY_MS = 1000L
+        private const val MAX_RETRY_DELAY_MS = 30000L
+        private const val PERSISTENT_FAILURE_THRESHOLD = 5
+    }
+    
     private val fallbackChain = listOf(
         MonitoringMethod.SYSTEM_HOOKS,
         MonitoringMethod.XPOSED_HOOKS,
+        MonitoringMethod.READ_LOGS,
         MonitoringMethod.ACCESSIBILITY_SERVICE,
         MonitoringMethod.FOREGROUND_SERVICE,
         MonitoringMethod.POLLING_FALLBACK
@@ -43,15 +68,26 @@ class ClipboardErrorHandler @Inject constructor(
     private val _isRecovering = MutableStateFlow(false)
     val isRecovering: StateFlow<Boolean> = _isRecovering.asStateFlow()
     
+    private val _recoveryAttempts = MutableStateFlow(0)
+    val recoveryAttempts: StateFlow<Int> = _recoveryAttempts.asStateFlow()
+    
     private var recoveryJob: Job? = null
     private var currentMonitor: ClipboardMonitor? = null
+    private var consecutiveErrors = 0
     
-    companion object {
-        private const val RECOVERY_TIMEOUT_MS = 5000L
-        private const val MAX_RECOVERY_ATTEMPTS = 3
-        private const val RECOVERY_DELAY_MS = 1000L
+    private val prefs: SharedPreferences by lazy {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
     
+    init {
+        // Restore state on initialization
+        restoreState()
+    }
+    
+    /**
+     * Handles a clipboard monitoring error with retry logic and fallback.
+     * Requirements: 10.1, 10.2
+     */
     suspend fun handleError(
         error: ClipboardError,
         currentMethod: MonitoringMethod,
@@ -59,6 +95,17 @@ class ClipboardErrorHandler @Inject constructor(
     ): ClipboardMonitor? {
         _errorState.value = error
         this.currentMonitor = currentMonitor
+        consecutiveErrors++
+        
+        // Save error state
+        saveErrorState(error, currentMethod)
+        
+        Log.w(TAG, "Handling error: ${error.javaClass.simpleName} for method: $currentMethod (consecutive: $consecutiveErrors)")
+        
+        // Check for persistent failures
+        if (consecutiveErrors >= PERSISTENT_FAILURE_THRESHOLD) {
+            notifyPersistentFailure(error, currentMethod)
+        }
         
         return when (error) {
             is ClipboardError.RootAccessLost -> handleRootAccessLost(currentMethod)
@@ -80,6 +127,197 @@ class ClipboardErrorHandler @Inject constructor(
             is ClipboardError.AllMonitoringMethodsFailed -> handleAllMonitoringMethodsFailed(error)
             is ClipboardError.UnknownError -> handleUnknownError(error, currentMethod)
         }
+    }
+    
+    /**
+     * Attempts recovery with exponential backoff.
+     * Requirements: 10.1, 10.2
+     */
+    suspend fun attemptRecoveryWithBackoff(
+        currentMethod: MonitoringMethod,
+        maxAttempts: Int = MAX_RECOVERY_ATTEMPTS
+    ): ClipboardMonitor? {
+        if (_isRecovering.value) {
+            Log.d(TAG, "Recovery already in progress")
+            return null
+        }
+        
+        _isRecovering.value = true
+        _recoveryAttempts.value = 0
+        
+        var lastException: Exception? = null
+        var delayMs = INITIAL_RETRY_DELAY_MS
+        
+        for (attempt in 1..maxAttempts) {
+            _recoveryAttempts.value = attempt
+            
+            try {
+                Log.d(TAG, "Recovery attempt $attempt/$maxAttempts with delay ${delayMs}ms")
+                
+                // Wait with exponential backoff
+                if (attempt > 1) {
+                    delay(delayMs)
+                    delayMs = (delayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+                }
+                
+                // Try to restart current monitor
+                currentMonitor?.let { monitor ->
+                    monitor.stopMonitoring()
+                    delay(500)
+                    monitor.startMonitoring()
+                    
+                    if (monitor.isMonitoring()) {
+                        Log.i(TAG, "Recovery successful on attempt $attempt")
+                        onRecoverySuccess(currentMethod)
+                        return monitor
+                    }
+                }
+                
+            } catch (e: Exception) {
+                lastException = e
+                Log.w(TAG, "Recovery attempt $attempt failed: ${e.message}")
+            }
+        }
+        
+        Log.e(TAG, "All recovery attempts failed", lastException)
+        _isRecovering.value = false
+        
+        // Try fallback method
+        return tryNextFallback(currentMethod)
+    }
+    
+    /**
+     * Called when recovery is successful.
+     */
+    private fun onRecoverySuccess(method: MonitoringMethod) {
+        consecutiveErrors = 0
+        _errorState.value = null
+        _isRecovering.value = false
+        _currentMethod.value = method
+        
+        saveSuccessfulMethod(method)
+        notificationManager.showRecoverySuccessNotification(method)
+    }
+    
+    /**
+     * Notifies user of persistent failures.
+     * Requirements: 10.3
+     */
+    private fun notifyPersistentFailure(error: ClipboardError, method: MonitoringMethod) {
+        Log.e(TAG, "Persistent failure detected: $consecutiveErrors consecutive errors")
+        notificationManager.showPersistentFailureNotification(
+            errorCount = consecutiveErrors,
+            lastError = error,
+            lastMethod = method
+        )
+    }
+    
+    /**
+     * Saves monitoring state for persistence.
+     * Requirements: 10.4
+     */
+    fun saveMonitoringState(method: MonitoringMethod, isActive: Boolean) {
+        try {
+            prefs.edit()
+                .putString(KEY_MONITORING_STATE, if (isActive) "active" else "inactive")
+                .putString(KEY_LAST_METHOD, method.name)
+                .apply()
+            Log.d(TAG, "Saved monitoring state: method=$method, active=$isActive")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save monitoring state", e)
+        }
+    }
+    
+    /**
+     * Restores monitoring state from persistence.
+     * Requirements: 10.4
+     */
+    fun restoreState(): MonitoringState? {
+        return try {
+            val state = prefs.getString(KEY_MONITORING_STATE, null)
+            val methodName = prefs.getString(KEY_LAST_METHOD, null)
+            val errorCount = prefs.getInt(KEY_ERROR_COUNT, 0)
+            
+            if (state != null && methodName != null) {
+                val method = try {
+                    MonitoringMethod.valueOf(methodName)
+                } catch (e: Exception) {
+                    null
+                }
+                
+                if (method != null) {
+                    consecutiveErrors = errorCount
+                    _currentMethod.value = method
+                    
+                    Log.d(TAG, "Restored state: method=$method, state=$state, errors=$errorCount")
+                    
+                    return MonitoringState(
+                        method = method,
+                        isActive = state == "active",
+                        errorCount = errorCount
+                    )
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore state", e)
+            null
+        }
+    }
+    
+    /**
+     * Saves error state for tracking.
+     */
+    private fun saveErrorState(error: ClipboardError, method: MonitoringMethod) {
+        try {
+            prefs.edit()
+                .putString(KEY_LAST_ERROR, error.javaClass.simpleName)
+                .putString(KEY_LAST_METHOD, method.name)
+                .putInt(KEY_ERROR_COUNT, consecutiveErrors)
+                .putLong(KEY_LAST_ERROR_TIME, System.currentTimeMillis())
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save error state", e)
+        }
+    }
+    
+    /**
+     * Saves successful method for future reference.
+     */
+    private fun saveSuccessfulMethod(method: MonitoringMethod) {
+        try {
+            prefs.edit()
+                .putString(KEY_LAST_METHOD, method.name)
+                .putInt(KEY_ERROR_COUNT, 0)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save successful method", e)
+        }
+    }
+    
+    /**
+     * Gets the last successful monitoring method.
+     */
+    fun getLastSuccessfulMethod(): MonitoringMethod? {
+        return try {
+            val methodName = prefs.getString(KEY_LAST_METHOD, null)
+            methodName?.let { MonitoringMethod.valueOf(it) }
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
+    /**
+     * Gets error statistics.
+     */
+    fun getErrorStats(): ErrorStats {
+        return ErrorStats(
+            consecutiveErrors = consecutiveErrors,
+            lastError = _errorState.value,
+            isRecovering = _isRecovering.value,
+            recoveryAttempts = _recoveryAttempts.value,
+            currentMethod = _currentMethod.value
+        )
     }
     
     private suspend fun handleRootAccessLost(currentMethod: MonitoringMethod): ClipboardMonitor? {
@@ -312,6 +550,15 @@ class ClipboardErrorHandler @Inject constructor(
                 rootDetectionService.isRooted() && 
                 rootDetectionService.getRootCapabilities().hasXposedFramework
             }
+            MonitoringMethod.READ_LOGS -> {
+                // Check if READ_LOGS permission is granted
+                try {
+                    context.checkSelfPermission(android.Manifest.permission.READ_LOGS) == 
+                        android.content.pm.PackageManager.PERMISSION_GRANTED
+                } catch (e: Exception) {
+                    false
+                }
+            }
             MonitoringMethod.ACCESSIBILITY_SERVICE -> {
                 accessibilityPermissionManager.isAccessibilityServiceEnabled()
             }
@@ -360,3 +607,23 @@ class ClipboardErrorHandler @Inject constructor(
         _isRecovering.value = false
     }
 }
+
+/**
+ * Represents the persisted monitoring state.
+ */
+data class MonitoringState(
+    val method: MonitoringMethod,
+    val isActive: Boolean,
+    val errorCount: Int
+)
+
+/**
+ * Error statistics for monitoring.
+ */
+data class ErrorStats(
+    val consecutiveErrors: Int,
+    val lastError: ClipboardError?,
+    val isRecovering: Boolean,
+    val recoveryAttempts: Int,
+    val currentMethod: MonitoringMethod?
+)

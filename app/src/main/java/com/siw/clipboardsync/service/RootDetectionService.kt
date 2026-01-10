@@ -1,9 +1,11 @@
 package com.siw.clipboardsync.service
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.siw.clipboardsync.monitor.model.RootCapabilities
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +17,14 @@ import javax.inject.Singleton
 /**
  * Service for detecting root access and assessing available root capabilities
  * on the current Android device.
+ * 
+ * Supports detection of:
+ * - Magisk (traditional and Zygisk)
+ * - KernelSU (including version detection)
+ * - APatch
+ * - SuperSU
+ * - KingRoot
+ * - Other root methods
  */
 @Singleton
 class RootDetectionService @Inject constructor(
@@ -22,6 +32,9 @@ class RootDetectionService @Inject constructor(
 ) {
     
     companion object {
+        private const val TAG = "RootDetectionService"
+        
+        // Standard su binary paths
         private val SU_BINARY_PATHS = arrayOf(
             "/system/bin/su",
             "/system/xbin/su",
@@ -32,13 +45,51 @@ class RootDetectionService @Inject constructor(
             "/data/local/bin/su",
             "/system/sd/xbin/su",
             "/system/bin/failsafe/su",
-            "/data/local/su"
+            "/data/local/su",
+            // KernelSU specific paths
+            "/data/adb/ksu/bin/su",
+            "/data/adb/ksud",
+            // APatch specific paths
+            "/data/adb/ap/bin/su",
+            "/data/adb/apd"
+        )
+        
+        // KernelSU specific paths
+        private val KERNELSU_PATHS = arrayOf(
+            "/data/adb/ksu",
+            "/data/adb/ksu/bin/ksud",
+            "/data/adb/ksu/bin/su",
+            "/data/adb/ksu/.ksurc",
+            "/data/adb/ksu/modules"
+        )
+        
+        // APatch specific paths
+        private val APATCH_PATHS = arrayOf(
+            "/data/adb/ap",
+            "/data/adb/apd",
+            "/data/adb/ap/bin/su",
+            "/data/adb/ap/modules"
+        )
+        
+        // Magisk specific paths
+        private val MAGISK_PATHS = arrayOf(
+            "/data/adb/magisk",
+            "/sbin/.magisk",
+            "/data/adb/magisk.db",
+            "/data/adb/modules"
         )
         
         private val ROOT_APP_PACKAGES = arrayOf(
+            // Magisk
+            "com.topjohnwu.magisk",
+            // KernelSU managers
+            "me.weishu.kernelsu",
+            "me.bmax.apatch",
+            // SuperSU
+            "eu.chainfire.supersu",
+            // Other root apps
             "com.noshufou.android.su",
             "com.noshufou.android.su.elite",
-            "eu.chainfire.supersu",
             "com.koushikdutta.superuser",
             "com.thirdparty.superuser",
             "com.yellowes.su",
@@ -48,8 +99,7 @@ class RootDetectionService @Inject constructor(
             "com.chelpus.lackypatch",
             "com.ramdroid.appquarantine",
             "com.ramdroid.appquarantinepro",
-            "com.topjohnwu.magisk",
-            "me.weishu.kernelsu"
+            "com.kingroot.kinguser"
         )
         
         private val ROOT_BUILD_TAGS = arrayOf(
@@ -72,13 +122,37 @@ class RootDetectionService @Inject constructor(
         val isRootAccessible = suBinaryPath != null && testSuAccess()
         val rootMethod = detectRootMethod()
         
+        // KernelSU specific detection
+        val kernelSuInfo = detectKernelSuDetails()
+        
+        // APatch specific detection
+        val aPatchInfo = detectAPatchDetails()
+        
+        // Test specific capabilities
+        val canExecuteRootCommands = isRootAccessible && testRootCommandExecution()
+        val canAccessClipboardService = isRootAccessible && testClipboardServiceAccess()
+        val canReadSystemLogs = checkReadLogsCapability()
+        val hasReadLogsPermission = checkReadLogsPermission()
+        
         RootCapabilities(
             hasSystemHooks = checkSystemHookAccess(),
             hasXposedFramework = checkXposedFramework(),
             hasNativeAccess = checkNativeLibraryAccess(),
             rootMethod = rootMethod,
             suBinaryPath = suBinaryPath,
-            isRootAccessible = isRootAccessible
+            isRootAccessible = isRootAccessible,
+            // KernelSU specific
+            kernelSuVersion = kernelSuInfo["version"] as? String,
+            kernelSuModuleCount = kernelSuInfo["moduleCount"] as? Int ?: 0,
+            hasKernelSuManager = isPackageInstalled("me.weishu.kernelsu"),
+            // APatch specific
+            hasAPatch = aPatchInfo["detected"] as? Boolean ?: false,
+            aPatchVersion = aPatchInfo["version"] as? String,
+            // Detailed capabilities
+            canExecuteRootCommands = canExecuteRootCommands,
+            canAccessClipboardService = canAccessClipboardService,
+            canReadSystemLogs = canReadSystemLogs,
+            hasReadLogsPermission = hasReadLogsPermission
         )
     }
     
@@ -151,20 +225,20 @@ class RootDetectionService @Inject constructor(
                     val process = Runtime.getRuntime().exec(command)
                     val exitCode = process.waitFor()
                     if (exitCode == 0) {
-                        Log.d("RootDetectionService", "Su access test succeeded with command: $command")
+                        Log.d(TAG, "Su access test succeeded with command: $command")
                         process.destroy()
                         return@withContext true
                     }
                     process.destroy()
                 } catch (e: Exception) {
-                    Log.w("RootDetectionService", "Su access test failed for command: $command", e)
+                    Log.w(TAG, "Su access test failed for command: $command", e)
                 }
             }
             
-            Log.w("RootDetectionService", "All su access tests failed")
+            Log.w(TAG, "All su access tests failed")
             false
         } catch (e: Exception) {
-            Log.e("RootDetectionService", "Exception during su access test", e)
+            Log.e(TAG, "Exception during su access test", e)
             false
         }
     }
@@ -176,7 +250,7 @@ class RootDetectionService @Inject constructor(
         return@withContext try {
             // First check if we have root access at all
             if (!testSuAccess()) {
-                Log.d("RootDetectionService", "No su access available")
+                Log.d(TAG, "No su access available")
                 return@withContext false
             }
             
@@ -188,16 +262,16 @@ class RootDetectionService @Inject constructor(
             rootProcess.destroy()
             
             if (exitCode == 0 && output.contains("uid=0(root)")) {
-                Log.d("RootDetectionService", "Root access confirmed with uid=0, enabling system hooks")
+                Log.d(TAG, "Root access confirmed with uid=0, enabling system hooks")
                 return@withContext true
             }
             
             // If we get here, we have some form of root but not full system access
-            Log.d("RootDetectionService", "Root available but restricted shell access detected")
+            Log.d(TAG, "Root available but restricted shell access detected")
             false
             
         } catch (e: Exception) {
-            Log.e("RootDetectionService", "Error checking system hook access", e)
+            Log.e(TAG, "Error checking system hook access", e)
             false
         }
     }
@@ -230,7 +304,7 @@ class RootDetectionService @Inject constructor(
         return@withContext try {
             // First check if we have root access at all
             if (!testSuAccess()) {
-                Log.d("RootDetectionService", "No su access for native library check")
+                Log.d(TAG, "No su access for native library check")
                 return@withContext false
             }
             
@@ -242,16 +316,16 @@ class RootDetectionService @Inject constructor(
             rootProcess.destroy()
             
             if (exitCode == 0 && output.contains("uid=0(root)")) {
-                Log.d("RootDetectionService", "Root access confirmed with uid=0, enabling native library access")
+                Log.d(TAG, "Root access confirmed with uid=0, enabling native library access")
                 return@withContext true
             }
             
             // If we get here, we have some form of root but not full system access
-            Log.d("RootDetectionService", "Root available but restricted shell access detected for native libraries")
+            Log.d(TAG, "Root available but restricted shell access detected for native libraries")
             false
             
         } catch (e: Exception) {
-            Log.e("RootDetectionService", "Error checking native library access", e)
+            Log.e(TAG, "Error checking native library access", e)
             false
         }
     }
@@ -261,10 +335,17 @@ class RootDetectionService @Inject constructor(
      */
     private fun detectRootMethod(): RootCapabilities.RootMethod {
         return when {
-            isPackageInstalled("com.topjohnwu.magisk") -> RootCapabilities.RootMethod.MAGISK
+            // Check KernelSU first (more specific)
             isPackageInstalled("me.weishu.kernelsu") || checkKernelSU() -> RootCapabilities.RootMethod.KERNELSU
+            // Check APatch
+            isPackageInstalled("me.bmax.apatch") || checkAPatch() -> RootCapabilities.RootMethod.APATCH
+            // Check Magisk
+            isPackageInstalled("com.topjohnwu.magisk") || checkMagisk() -> RootCapabilities.RootMethod.MAGISK
+            // Check SuperSU
             isPackageInstalled("eu.chainfire.supersu") -> RootCapabilities.RootMethod.SUPERSU
+            // Check KingRoot
             isPackageInstalled("com.kingroot.kinguser") -> RootCapabilities.RootMethod.KINGROOT
+            // Generic root detection
             checkSuBinary() || checkBuildTags() -> RootCapabilities.RootMethod.OTHER
             else -> RootCapabilities.RootMethod.NONE
         }
@@ -275,30 +356,274 @@ class RootDetectionService @Inject constructor(
      */
     private fun checkKernelSU(): Boolean {
         return try {
-            // Check for KernelSU directory
-            val ksuDir = File("/data/adb/ksu")
-            if (ksuDir.exists() && ksuDir.isDirectory) {
-                Log.d("RootDetectionService", "KernelSU directory found: /data/adb/ksu")
-                return true
+            // Check for KernelSU paths
+            for (path in KERNELSU_PATHS) {
+                val file = File(path)
+                if (file.exists()) {
+                    Log.d(TAG, "KernelSU indicator found: $path")
+                    return true
+                }
             }
             
-            // Check for KernelSU binary
-            val ksuBinary = File("/data/adb/ksu/bin/ksud")
-            if (ksuBinary.exists() && ksuBinary.canExecute()) {
-                Log.d("RootDetectionService", "KernelSU binary found: /data/adb/ksu/bin/ksud")
-                return true
+            // Try to detect via kernel version string
+            try {
+                val kernelVersion = System.getProperty("os.version") ?: ""
+                if (kernelVersion.contains("ksu", ignoreCase = true) || 
+                    kernelVersion.contains("kernelsu", ignoreCase = true)) {
+                    Log.d(TAG, "KernelSU detected in kernel version: $kernelVersion")
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error checking kernel version for KernelSU", e)
             }
             
-            // Check for KernelSU rc file
-            val ksuRc = File("/data/adb/ksu/.ksurc")
-            if (ksuRc.exists()) {
-                Log.d("RootDetectionService", "KernelSU rc file found: /data/adb/ksu/.ksurc")
-                return true
+            // Try to execute ksud command
+            try {
+                val process = Runtime.getRuntime().exec("ksud --version")
+                val exitCode = process.waitFor()
+                process.destroy()
+                if (exitCode == 0) {
+                    Log.d(TAG, "KernelSU detected via ksud command")
+                    return true
+                }
+            } catch (e: Exception) {
+                // ksud not available
             }
             
             false
         } catch (e: Exception) {
-            Log.w("RootDetectionService", "Error checking KernelSU indicators", e)
+            Log.w(TAG, "Error checking KernelSU indicators", e)
+            false
+        }
+    }
+    
+    /**
+     * Detects detailed KernelSU information
+     */
+    private fun detectKernelSuDetails(): Map<String, Any?> {
+        val result = mutableMapOf<String, Any?>()
+        
+        try {
+            // Check if KernelSU is present
+            if (!checkKernelSU() && !isPackageInstalled("me.weishu.kernelsu")) {
+                return result
+            }
+            
+            // Try to get KernelSU version
+            try {
+                val process = Runtime.getRuntime().exec("su -v")
+                val exitCode = process.waitFor()
+                if (exitCode == 0) {
+                    val output = process.inputStream.bufferedReader().readText().trim()
+                    if (output.contains("KernelSU", ignoreCase = true) || output.contains("ksu", ignoreCase = true)) {
+                        // Extract version number
+                        val versionMatch = Regex("(\\d+\\.\\d+\\.?\\d*)").find(output)
+                        result["version"] = versionMatch?.value ?: output
+                    }
+                }
+                process.destroy()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error getting KernelSU version", e)
+            }
+            
+            // Count installed modules
+            try {
+                val modulesDir = File("/data/adb/ksu/modules")
+                if (modulesDir.exists() && modulesDir.isDirectory) {
+                    val moduleCount = modulesDir.listFiles()?.count { it.isDirectory } ?: 0
+                    result["moduleCount"] = moduleCount
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error counting KernelSU modules", e)
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error detecting KernelSU details", e)
+        }
+        
+        return result
+    }
+    
+    /**
+     * Checks for APatch specific indicators
+     */
+    private fun checkAPatch(): Boolean {
+        return try {
+            // Check for APatch paths
+            for (path in APATCH_PATHS) {
+                val file = File(path)
+                if (file.exists()) {
+                    Log.d(TAG, "APatch indicator found: $path")
+                    return true
+                }
+            }
+            
+            // Try to execute apd command
+            try {
+                val process = Runtime.getRuntime().exec("apd --version")
+                val exitCode = process.waitFor()
+                process.destroy()
+                if (exitCode == 0) {
+                    Log.d(TAG, "APatch detected via apd command")
+                    return true
+                }
+            } catch (e: Exception) {
+                // apd not available
+            }
+            
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking APatch indicators", e)
+            false
+        }
+    }
+    
+    /**
+     * Detects detailed APatch information
+     */
+    private fun detectAPatchDetails(): Map<String, Any?> {
+        val result = mutableMapOf<String, Any?>()
+        
+        try {
+            val detected = checkAPatch() || isPackageInstalled("me.bmax.apatch")
+            result["detected"] = detected
+            
+            if (!detected) {
+                return result
+            }
+            
+            // Try to get APatch version
+            try {
+                val process = Runtime.getRuntime().exec("apd --version")
+                val exitCode = process.waitFor()
+                if (exitCode == 0) {
+                    val output = process.inputStream.bufferedReader().readText().trim()
+                    val versionMatch = Regex("(\\d+\\.\\d+\\.?\\d*)").find(output)
+                    result["version"] = versionMatch?.value ?: output
+                }
+                process.destroy()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error getting APatch version", e)
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error detecting APatch details", e)
+        }
+        
+        return result
+    }
+    
+    /**
+     * Checks for Magisk specific indicators
+     */
+    private fun checkMagisk(): Boolean {
+        return try {
+            // Check for Magisk paths
+            for (path in MAGISK_PATHS) {
+                val file = File(path)
+                if (file.exists()) {
+                    Log.d(TAG, "Magisk indicator found: $path")
+                    return true
+                }
+            }
+            
+            // Try to execute magisk command
+            try {
+                val process = Runtime.getRuntime().exec("magisk -v")
+                val exitCode = process.waitFor()
+                process.destroy()
+                if (exitCode == 0) {
+                    Log.d(TAG, "Magisk detected via magisk command")
+                    return true
+                }
+            } catch (e: Exception) {
+                // magisk not available
+            }
+            
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking Magisk indicators", e)
+            false
+        }
+    }
+    
+    /**
+     * Tests if root commands can be executed successfully
+     */
+    private suspend fun testRootCommandExecution(): Boolean = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val process = Runtime.getRuntime().exec("su -c 'echo root_test'")
+            val exitCode = process.waitFor()
+            val output = process.inputStream.bufferedReader().readText().trim()
+            process.destroy()
+            exitCode == 0 && output.contains("root_test")
+        } catch (e: Exception) {
+            Log.w(TAG, "Root command execution test failed", e)
+            false
+        }
+    }
+    
+    /**
+     * Tests if clipboard service can be accessed via root
+     */
+    private suspend fun testClipboardServiceAccess(): Boolean = withContext(Dispatchers.IO) {
+        return@withContext try {
+            // Try service call clipboard
+            val process = Runtime.getRuntime().exec("su -c 'service call clipboard 1'")
+            val exitCode = process.waitFor()
+            process.destroy()
+            
+            if (exitCode == 0) {
+                Log.d(TAG, "Clipboard service access via root confirmed")
+                return@withContext true
+            }
+            
+            // Try dumpsys clipboard
+            val process2 = Runtime.getRuntime().exec("su -c 'dumpsys clipboard'")
+            val exitCode2 = process2.waitFor()
+            process2.destroy()
+            
+            exitCode2 == 0
+        } catch (e: Exception) {
+            Log.w(TAG, "Clipboard service access test failed", e)
+            false
+        }
+    }
+    
+    /**
+     * Checks if READ_LOGS permission is granted
+     */
+    private fun checkReadLogsPermission(): Boolean {
+        return try {
+            ContextCompat.checkSelfPermission(
+                context, 
+                Manifest.permission.READ_LOGS
+            ) == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking READ_LOGS permission", e)
+            false
+        }
+    }
+    
+    /**
+     * Checks if we can actually read system logs
+     */
+    private suspend fun checkReadLogsCapability(): Boolean = withContext(Dispatchers.IO) {
+        return@withContext try {
+            // First check if permission is granted
+            if (!checkReadLogsPermission()) {
+                return@withContext false
+            }
+            
+            // Try to read logcat
+            val process = Runtime.getRuntime().exec("logcat -d -t 1")
+            val exitCode = process.waitFor()
+            val output = process.inputStream.bufferedReader().readText()
+            process.destroy()
+            
+            exitCode == 0 && output.isNotEmpty()
+        } catch (e: Exception) {
+            Log.w(TAG, "Read logs capability test failed", e)
             false
         }
     }
@@ -322,7 +647,7 @@ class RootDetectionService @Inject constructor(
      */
     suspend fun requestRootAccess(): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
-            Log.i("RootDetectionService", "Explicitly requesting root access...")
+            Log.i(TAG, "Explicitly requesting root access...")
             
             // Try multiple approaches to request root access
             val commands = arrayOf(
@@ -335,36 +660,36 @@ class RootDetectionService @Inject constructor(
             
             for ((index, command) in commands.withIndex()) {
                 try {
-                    Log.d("RootDetectionService", "Attempting root command ${index + 1}: $command")
+                    Log.d(TAG, "Attempting root command ${index + 1}: $command")
                     val process = Runtime.getRuntime().exec(command)
                     val exitCode = process.waitFor()
                     
                     if (exitCode == 0) {
                         // Read the output to confirm
                         val output = process.inputStream.bufferedReader().readText().trim()
-                        Log.i("RootDetectionService", "Root command succeeded with output: $output")
+                        Log.i(TAG, "Root command succeeded with output: $output")
                         accessGranted = true
                         break
                     } else {
-                        Log.w("RootDetectionService", "Root command failed with exit code: $exitCode")
+                        Log.w(TAG, "Root command failed with exit code: $exitCode")
                     }
                     
                     process.destroy()
                 } catch (e: Exception) {
-                    Log.e("RootDetectionService", "Exception executing root command: $command", e)
+                    Log.e(TAG, "Exception executing root command: $command", e)
                 }
             }
             
             if (accessGranted) {
-                Log.i("RootDetectionService", "Root access successfully granted!")
+                Log.i(TAG, "Root access successfully granted!")
             } else {
-                Log.w("RootDetectionService", "Root access was not granted or failed")
+                Log.w(TAG, "Root access was not granted or failed")
             }
             
             accessGranted
             
         } catch (e: Exception) {
-            Log.e("RootDetectionService", "Error requesting root access", e)
+            Log.e(TAG, "Error requesting root access", e)
             false
         }
     }
