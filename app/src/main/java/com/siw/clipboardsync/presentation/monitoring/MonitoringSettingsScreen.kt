@@ -610,6 +610,7 @@ private fun getMethodDisplayName(method: MonitoringMethod): String {
     return when (method) {
         MonitoringMethod.SYSTEM_HOOKS -> "System Hooks"
         MonitoringMethod.XPOSED_HOOKS -> "Xposed Framework"
+        MonitoringMethod.READ_LOGS -> "Logcat Monitor"
         MonitoringMethod.ACCESSIBILITY_SERVICE -> "Accessibility Service"
         MonitoringMethod.FOREGROUND_SERVICE -> "Foreground Service"
         MonitoringMethod.POLLING_FALLBACK -> "Polling Fallback"
@@ -620,6 +621,7 @@ private fun getMethodDescription(method: MonitoringMethod): String {
     return when (method) {
         MonitoringMethod.SYSTEM_HOOKS -> "Direct system-level clipboard hooks (requires root)"
         MonitoringMethod.XPOSED_HOOKS -> "Xposed/LSPosed framework integration (requires root)"
+        MonitoringMethod.READ_LOGS -> "Monitor clipboard via logcat (requires READ_LOGS permission)"
         MonitoringMethod.ACCESSIBILITY_SERVICE -> "Uses accessibility service for clipboard access"
         MonitoringMethod.FOREGROUND_SERVICE -> "Persistent foreground service monitoring"
         MonitoringMethod.POLLING_FALLBACK -> "Periodic clipboard checking (battery intensive)"

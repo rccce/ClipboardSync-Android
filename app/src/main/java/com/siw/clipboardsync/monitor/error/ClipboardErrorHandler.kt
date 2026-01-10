@@ -44,6 +44,7 @@ class ClipboardErrorHandler @Inject constructor(
         private const val KEY_MONITORING_STATE = "monitoring_state"
         
         private const val RECOVERY_TIMEOUT_MS = 5000L
+        private const val RECOVERY_DELAY_MS = 2000L
         private const val MAX_RECOVERY_ATTEMPTS = 3
         private const val INITIAL_RETRY_DELAY_MS = 1000L
         private const val MAX_RETRY_DELAY_MS = 30000L
@@ -573,6 +574,9 @@ class ClipboardErrorHandler @Inject constructor(
             MonitoringMethod.XPOSED_HOOKS -> {
                 // These would be created by dependency injection in real implementation
                 null // SystemLevelClipboardMonitor()
+            }
+            MonitoringMethod.READ_LOGS -> {
+                null // LogcatClipboardMonitor()
             }
             MonitoringMethod.ACCESSIBILITY_SERVICE -> {
                 null // AccessibilityClipboardMonitor()

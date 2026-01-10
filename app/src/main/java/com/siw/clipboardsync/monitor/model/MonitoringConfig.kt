@@ -51,6 +51,7 @@ data class MonitoringConfig(
         return when (method) {
             MonitoringMethod.SYSTEM_HOOKS -> enableSystemHooks
             MonitoringMethod.XPOSED_HOOKS -> enableXposedHooks
+            MonitoringMethod.READ_LOGS -> true // READ_LOGS is always enabled if available
             MonitoringMethod.ACCESSIBILITY_SERVICE -> enableAccessibilityService
             MonitoringMethod.FOREGROUND_SERVICE -> enableForegroundService
             MonitoringMethod.POLLING_FALLBACK -> enablePollingFallback

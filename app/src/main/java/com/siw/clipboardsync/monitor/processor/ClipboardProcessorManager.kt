@@ -103,6 +103,69 @@ class ClipboardProcessorManager(private val context: Context) {
     }
     
     /**
+     * Handles processing result and shows appropriate notifications.
+     */
+    private suspend fun handleProcessingResult(
+        result: ProcessingResult,
+        processor: ClipboardContentProcessor
+    ) {
+        when (result) {
+            is ProcessingResult.Success -> {
+                // Show success notification if content was significantly processed
+                val originalSize = result.processedContent.metadata["original_size"]?.toString()?.toLongOrNull()
+                val currentSize = result.processedContent.size
+                
+                if (originalSize != null && originalSize > currentSize * 1.5) {
+                    notificationHandler.showCompressionSuccessNotification(
+                        originalSize, currentSize, processor.supportedType
+                    )
+                }
+            }
+            
+            is ProcessingResult.SizeExceeded -> {
+                notificationHandler.showSizeExceededNotification(
+                    result.actualSize,
+                    result.maxSize,
+                    processor.supportedType
+                )
+            }
+            
+            is ProcessingResult.Failure -> {
+                when (result.error) {
+                    is ClipboardError.ContentTooLarge -> {
+                        notificationHandler.showSizeExceededNotification(
+                            result.error.actualSize,
+                            result.error.maxSize,
+                            processor.supportedType
+                        )
+                    }
+                    is ClipboardError.PermissionDenied -> {
+                        notificationHandler.showPermissionRequiredNotification(
+                            result.error.permission
+                        )
+                    }
+                    is ClipboardError.UnsupportedContentType -> {
+                        notificationHandler.showUnsupportedContentNotification(
+                            result.originalContent
+                        )
+                    }
+                    else -> {
+                        notificationHandler.showProcessingErrorNotification(
+                            result.error,
+                            processor.supportedType
+                        )
+                    }
+                }
+            }
+            
+            is ProcessingResult.Debounced,
+            is ProcessingResult.Deduplicated -> {
+                // No notification needed for debounced/deduplicated content
+            }
+        }
+    }
+    
+    /**
      * Checks if content should be debounced (too soon after last processing).
      * Requirements: 8.5
      */
@@ -258,61 +321,6 @@ class ClipboardProcessorManager(private val context: Context) {
             processor.supportedType == content.type ||
             (content.type == ClipboardContent.ContentType.UNKNOWN && 
              processor.detectContentType(content.data, content.mimeType) != null)
-        }
-    }
-    
-    private suspend fun handleProcessingResult(
-        result: ProcessingResult,
-        processor: ClipboardContentProcessor
-    ) {
-        when (result) {
-            is ProcessingResult.Success -> {
-                // Show success notification if content was significantly processed
-                val originalSize = result.processedContent.metadata["original_size"]?.toString()?.toLongOrNull()
-                val currentSize = result.processedContent.size
-                
-                if (originalSize != null && originalSize > currentSize * 1.5) {
-                    notificationHandler.showCompressionSuccessNotification(
-                        originalSize, currentSize, processor.supportedType
-                    )
-                }
-            }
-            
-            is ProcessingResult.SizeExceeded -> {
-                notificationHandler.showSizeExceededNotification(
-                    result.actualSize,
-                    result.maxSize,
-                    processor.supportedType
-                )
-            }
-            
-            is ProcessingResult.Failure -> {
-                when (result.error) {
-                    is ClipboardError.ContentTooLarge -> {
-                        notificationHandler.showSizeExceededNotification(
-                            result.error.actualSize,
-                            result.error.maxSize,
-                            processor.supportedType
-                        )
-                    }
-                    is ClipboardError.PermissionDenied -> {
-                        notificationHandler.showPermissionRequiredNotification(
-                            result.error.permission
-                        )
-                    }
-                    is ClipboardError.UnsupportedContentType -> {
-                        notificationHandler.showUnsupportedContentNotification(
-                            result.originalContent
-                        )
-                    }
-                    else -> {
-                        notificationHandler.showProcessingErrorNotification(
-                            result.error,
-                            processor.supportedType
-                        )
-                    }
-                }
-            }
         }
     }
     

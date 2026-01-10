@@ -162,6 +162,7 @@ class MonitoringSettingsViewModel @Inject constructor(
         monitoringConfig = when (method) {
             MonitoringMethod.SYSTEM_HOOKS -> monitoringConfig.copy(enableSystemHooks = enabled)
             MonitoringMethod.XPOSED_HOOKS -> monitoringConfig.copy(enableXposedHooks = enabled)
+            MonitoringMethod.READ_LOGS -> monitoringConfig // READ_LOGS doesn't have a config toggle
             MonitoringMethod.ACCESSIBILITY_SERVICE -> monitoringConfig.copy(enableAccessibilityService = enabled)
             MonitoringMethod.FOREGROUND_SERVICE -> monitoringConfig.copy(enableForegroundService = enabled)
             MonitoringMethod.POLLING_FALLBACK -> monitoringConfig.copy(enablePollingFallback = enabled)

@@ -281,6 +281,7 @@ private fun getMethodDisplayName(method: MonitoringMethod): String {
     return when (method) {
         MonitoringMethod.SYSTEM_HOOKS -> "System Hooks"
         MonitoringMethod.XPOSED_HOOKS -> "Xposed"
+        MonitoringMethod.READ_LOGS -> "Logcat"
         MonitoringMethod.ACCESSIBILITY_SERVICE -> "Accessibility"
         MonitoringMethod.FOREGROUND_SERVICE -> "Foreground"
         MonitoringMethod.POLLING_FALLBACK -> "Polling"

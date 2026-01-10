@@ -332,6 +332,7 @@ class ClipboardMonitorManager @Inject constructor(
         return when (strategy.method) {
             MonitoringMethod.SYSTEM_HOOKS,
             MonitoringMethod.XPOSED_HOOKS -> systemLevelMonitor
+            MonitoringMethod.READ_LOGS -> systemLevelMonitor // Use system level monitor for logcat
             MonitoringMethod.ACCESSIBILITY_SERVICE -> accessibilityMonitor
             MonitoringMethod.FOREGROUND_SERVICE -> foregroundServiceMonitor
             MonitoringMethod.POLLING_FALLBACK -> pollingMonitor
