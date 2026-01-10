@@ -100,6 +100,16 @@
                 <data android:scheme="package" />
             </intent-filter>
         </receiver>
+        
+        <!-- Static broadcast receiver for Xposed clipboard hook -->
+        <receiver
+            android:name=".monitor.xposed.StaticClipboardReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="1000">
+                <action android:name="com.siw.clipboardsync.CLIPBOARD_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

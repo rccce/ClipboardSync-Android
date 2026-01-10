@@ -129,27 +129,27 @@ class XposedHookManager @Inject constructor(
         try {
             clipboardHookReceiver = ClipboardHookReceiver().apply {
                 setClipboardListener { content ->
-                    Log.d(TAG, "Received clipboard content from Xposed hook: ${content.type}")
+                    Log.i(TAG, "========================================")
+                    Log.i(TAG, "Received clipboard content from Xposed hook!")
+                    Log.i(TAG, "Type: ${content.type}")
+                    Log.i(TAG, "Size: ${content.size} bytes")
+                    Log.i(TAG, "Source: ${content.source}")
+                    Log.i(TAG, "========================================")
                     clipboardCallback?.invoke(content)
                 }
             }
             
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(
-                    clipboardHookReceiver,
-                    ClipboardHookReceiver.createIntentFilter(),
-                    Context.RECEIVER_NOT_EXPORTED
-                )
-            } else {
-                @Suppress("UnspecifiedRegisterReceiverFlag")
-                context.registerReceiver(
-                    clipboardHookReceiver,
-                    ClipboardHookReceiver.createIntentFilter()
-                )
-            }
+            // Use the new register method that handles all Android versions
+            val registered = ClipboardHookReceiver.register(context, clipboardHookReceiver!!)
             
-            isReceiverRegistered = true
-            Log.i(TAG, "Clipboard hook receiver registered successfully")
+            if (registered) {
+                isReceiverRegistered = true
+                Log.i(TAG, "Clipboard hook receiver registered successfully")
+                Log.i(TAG, "Waiting for broadcasts from Xposed module...")
+                Log.i(TAG, "Make sure the module is enabled in LSPosed Manager with 'System Framework' scope")
+            } else {
+                throw Exception("Failed to register clipboard hook receiver")
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register clipboard hook receiver", e)

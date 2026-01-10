@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.util.Log
 import com.siw.clipboardsync.monitor.model.ClipboardContent
 
@@ -33,7 +34,10 @@ class ClipboardHookReceiver : BroadcastReceiver() {
          * Creates an IntentFilter for clipboard change broadcasts.
          */
         fun createIntentFilter(): IntentFilter {
-            return IntentFilter(ACTION_CLIPBOARD_CHANGED)
+            return IntentFilter(ACTION_CLIPBOARD_CHANGED).apply {
+                // Add priority to ensure we receive the broadcast
+                priority = IntentFilter.SYSTEM_HIGH_PRIORITY
+            }
         }
         
         /**
@@ -53,6 +57,37 @@ class ClipboardHookReceiver : BroadcastReceiver() {
                 putExtra(EXTRA_SOURCE_PACKAGE, sourcePackage)
             }
         }
+        
+        /**
+         * Registers the receiver with the given context.
+         * Handles different Android versions appropriately.
+         */
+        fun register(context: Context, receiver: ClipboardHookReceiver): Boolean {
+            return try {
+                val filter = createIntentFilter()
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    // Android 13+ requires explicit export flag
+                    context.registerReceiver(
+                        receiver,
+                        filter,
+                        Context.RECEIVER_EXPORTED
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    // Android 8+ 
+                    @Suppress("UnspecifiedRegisterReceiverFlag")
+                    context.registerReceiver(receiver, filter)
+                } else {
+                    context.registerReceiver(receiver, filter)
+                }
+                
+                Log.i(TAG, "ClipboardHookReceiver registered successfully")
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to register ClipboardHookReceiver", e)
+                false
+            }
+        }
     }
     
     private var clipboardListener: ((ClipboardContent) -> Unit)? = null
@@ -62,10 +97,14 @@ class ClipboardHookReceiver : BroadcastReceiver() {
      */
     fun setClipboardListener(listener: (ClipboardContent) -> Unit) {
         this.clipboardListener = listener
+        Log.d(TAG, "Clipboard listener set")
     }
     
     override fun onReceive(context: Context, intent: Intent) {
+        Log.d(TAG, "onReceive called with action: ${intent.action}")
+        
         if (intent.action != ACTION_CLIPBOARD_CHANGED) {
+            Log.w(TAG, "Unexpected action: ${intent.action}")
             return
         }
         
@@ -75,12 +114,19 @@ class ClipboardHookReceiver : BroadcastReceiver() {
             val timestamp = intent.getLongExtra(EXTRA_TIMESTAMP, System.currentTimeMillis())
             val sourcePackage = intent.getStringExtra(EXTRA_SOURCE_PACKAGE) ?: "unknown"
             
+            Log.i(TAG, "========================================")
+            Log.i(TAG, "Received clipboard change from Xposed hook!")
+            Log.i(TAG, "Source: $sourcePackage")
+            Log.i(TAG, "MimeType: $mimeType")
+            Log.i(TAG, "Timestamp: $timestamp")
+            Log.i(TAG, "Content length: ${content?.length ?: 0}")
+            Log.i(TAG, "Content preview: ${content?.take(100) ?: "null"}...")
+            Log.i(TAG, "========================================")
+            
             if (content.isNullOrEmpty()) {
                 Log.w(TAG, "Received empty clipboard content from Xposed hook")
                 return
             }
-            
-            Log.i(TAG, "Received clipboard change from Xposed hook: ${content.take(50)}...")
             
             val clipboardContent = ClipboardContent(
                 type = determineContentType(mimeType),
@@ -91,7 +137,12 @@ class ClipboardHookReceiver : BroadcastReceiver() {
                 size = content.length.toLong()
             )
             
-            clipboardListener?.invoke(clipboardContent)
+            if (clipboardListener != null) {
+                Log.d(TAG, "Invoking clipboard listener")
+                clipboardListener?.invoke(clipboardContent)
+            } else {
+                Log.w(TAG, "No clipboard listener set!")
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "Error processing clipboard change broadcast", e)
