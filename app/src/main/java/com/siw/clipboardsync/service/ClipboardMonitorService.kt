@@ -503,6 +503,7 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
         val notificationText = when (methodName) {
             "SYSTEM_HOOKS" -> "System-level monitoring active"
             "XPOSED_HOOKS" -> "Xposed framework monitoring active"
+            "READ_LOGS" -> "Logcat monitoring active"
             "ACCESSIBILITY_SERVICE" -> "Accessibility monitoring active"
             "FOREGROUND_SERVICE" -> "Foreground service monitoring active"
             "POLLING_FALLBACK" -> "Polling fallback monitoring active"
