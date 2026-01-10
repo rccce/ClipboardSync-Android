@@ -5,6 +5,7 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <string>
 
 #define LOG_TAG "SystemHooks"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)

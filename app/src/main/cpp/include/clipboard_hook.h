@@ -41,11 +41,12 @@ public:
     int setClipboardContent(const std::string& content);
 
     // State queries
-    bool isInitialized() const { return initialized_.load(); }
-    bool isMonitoring() const { return monitoring_.load(); }
+    bool isInitialized() const;
+    bool isMonitoring() const;
 
     // Static instance access
     static ClipboardHook& getInstance();
+    static void destroyInstance();
 
 private:
     // Internal state
@@ -78,6 +79,10 @@ private:
     // Root access utilities
     bool checkRootAccess();
     int executeRootCommand(const std::string& command);
+    
+    // JNI cleanup
+    void cleanupJniReferences(JNIEnv* env);
+    void waitForMonitoringThreadStop();
     
     // Thread safety
     mutable std::mutex hookMutex_;
