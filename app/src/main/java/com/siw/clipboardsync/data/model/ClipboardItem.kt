@@ -15,15 +15,26 @@ data class ClipboardItem(
     val fileName: String? = null,
     @SerializedName("file_size")
     val fileSize: Long? = null,
+    @SerializedName("mime_type")
+    val mimeType: String? = null,
+    @SerializedName("checksum")
+    val checksum: String? = null,
     @SerializedName("device_id")
     val deviceId: String,
     @SerializedName("device_name")
-    val deviceName: String,
+    val deviceName: String? = null,
     @SerializedName("created_at")
     val createdAt: String,
     @SerializedName("hash")
     val hash: String
-)
+) {
+    fun isFile(): Boolean = contentType == "file"
+    fun isImage(): Boolean = contentType == "image"
+    fun isText(): Boolean = contentType == "text"
+    
+    // 获取显示用的设备名称
+    fun getDisplayDeviceName(): String = deviceName ?: "Unknown Device"
+}
 
 data class ClipboardSyncRequest(
     @SerializedName("content")

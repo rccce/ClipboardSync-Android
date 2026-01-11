@@ -14,6 +14,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.siw.clipboardsync.R
 import com.siw.clipboardsync.data.repository.ClipboardRepository
 import com.siw.clipboardsync.manager.ClipboardSyncManager
+import com.siw.clipboardsync.manager.FileSyncManager
 import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.utils.ClipboardUtils
 import com.siw.clipboardsync.utils.DeviceUtils
@@ -40,6 +41,9 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     
     @Inject
     lateinit var clipboardSyncManager: ClipboardSyncManager
+    
+    @Inject
+    lateinit var fileSyncManager: FileSyncManager
     
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
@@ -393,6 +397,7 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     /**
      * Check clipboard and sync if changed.
      * Used for FOREGROUND_SYNC mode and manual sync.
+     * Supports both text and file URI content.
      */
     private suspend fun checkAndSyncClipboard() {
         try {
@@ -402,35 +407,103 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
                 return
             }
             
-            val content = ClipboardUtils.extractTextContent(clipData)
-            if (content.isNullOrBlank()) {
-                return
-            }
+            // Check content type
+            val contentType = ClipboardUtils.getContentType(clipData)
+            Log.d(TAG, "Clipboard content type: $contentType")
             
-            val contentHash = DeviceUtils.generateContentHash(content)
-            
-            if (contentHash != lastClipboardHash) {
-                lastClipboardHash = contentHash
-                Log.i(TAG, "Clipboard changed, syncing: ${content.take(50)}...")
-                
-                if (ClipboardUtils.shouldSyncContent(content)) {
-                    val result = clipboardSyncManager.syncLocalClipboard(content, "text")
-                    if (result.isSuccess) {
-                        Log.d(TAG, "Clipboard synced successfully")
-                        updateNotification("已同步")
-                        delay(2000)
-                        updateNotificationForMethod(currentMonitoringMethod)
+            when (contentType) {
+                "file" -> {
+                    // Handle file URI
+                    val uri = ClipboardUtils.extractUriContent(clipData)
+                    if (uri != null) {
+                        handleFileClipboard(uri)
                     } else {
-                        Log.w(TAG, "Sync failed: ${result.exceptionOrNull()?.message}")
+                        Log.d(TAG, "No URI found in file clipboard")
                     }
                 }
-            } else {
-                Log.d(TAG, "Clipboard unchanged")
+                "image" -> {
+                    // Handle image URI
+                    val uri = ClipboardUtils.extractUriContent(clipData)
+                    if (uri != null) {
+                        handleFileClipboard(uri)
+                    } else {
+                        Log.d(TAG, "No URI found in image clipboard")
+                    }
+                }
+                else -> {
+                    // Handle text content
+                    val content = ClipboardUtils.extractTextContent(clipData)
+                    if (content.isNullOrBlank()) {
+                        return
+                    }
+                    
+                    val contentHash = DeviceUtils.generateContentHash(content)
+                    
+                    if (contentHash != lastClipboardHash) {
+                        lastClipboardHash = contentHash
+                        Log.i(TAG, "Clipboard changed, syncing: ${content.take(50)}...")
+                        
+                        if (ClipboardUtils.shouldSyncContent(content)) {
+                            val result = clipboardSyncManager.syncLocalClipboard(content, "text")
+                            if (result.isSuccess) {
+                                Log.d(TAG, "Clipboard synced successfully")
+                                updateNotification("已同步")
+                                delay(2000)
+                                updateNotificationForMethod(currentMonitoringMethod)
+                            } else {
+                                Log.w(TAG, "Sync failed: ${result.exceptionOrNull()?.message}")
+                            }
+                        }
+                    } else {
+                        Log.d(TAG, "Clipboard unchanged")
+                    }
+                }
             }
         } catch (e: SecurityException) {
             Log.w(TAG, "Clipboard access denied: ${e.message}")
         } catch (e: Exception) {
             Log.e(TAG, "Error checking clipboard", e)
+        }
+    }
+    
+    /**
+     * Handle file URI from clipboard - upload and sync
+     */
+    private suspend fun handleFileClipboard(uri: android.net.Uri) {
+        try {
+            val uriHash = uri.toString().hashCode().toString()
+            
+            // Check if already synced
+            if (uriHash == lastClipboardHash) {
+                Log.d(TAG, "File URI unchanged, skipping")
+                return
+            }
+            
+            lastClipboardHash = uriHash
+            Log.i(TAG, "File detected in clipboard: $uri")
+            updateNotification("检测到文件，正在上传...")
+            
+            // Use FileSyncManager to upload
+            val result = fileSyncManager.uploadAndSyncFile(uri)
+            
+            if (result.isSuccess) {
+                val item = result.getOrNull()
+                Log.d(TAG, "File synced successfully: ${item?.fileName}")
+                updateNotification("文件已同步: ${item?.fileName ?: "unknown"}")
+                delay(3000)
+                updateNotificationForMethod(currentMonitoringMethod)
+            } else {
+                val error = result.exceptionOrNull()?.message ?: "Unknown error"
+                Log.w(TAG, "File sync failed: $error")
+                updateNotification("文件同步失败: ${error.take(30)}")
+                delay(3000)
+                updateNotificationForMethod(currentMonitoringMethod)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling file clipboard", e)
+            updateNotification("文件处理失败")
+            delay(2000)
+            updateNotificationForMethod(currentMonitoringMethod)
         }
     }
     

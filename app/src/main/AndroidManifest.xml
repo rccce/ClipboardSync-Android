@@ -59,6 +59,28 @@
             </intent-filter>
         </activity>
         
+        <!-- Share Receiver Activity -->
+        <activity
+            android:name=".ShareReceiverActivity"
+            android:exported="true"
+            android:label="同步到其他设备"
+            android:theme="@style/Theme.ClipboardSync.Transparent"
+            android:excludeFromRecents="true"
+            android:taskAffinity="">
+            <!-- Receive single file -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <!-- Receive multiple files -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+        
         <!-- Clipboard Monitor Service -->
         <service
             android:name=".service.ClipboardMonitorService"

@@ -13,12 +13,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.siw.clipboardsync.data.model.ClipboardItem
+import com.siw.clipboardsync.data.model.FileTransferState
 import com.siw.clipboardsync.manager.ClipboardSyncManager
 import com.siw.clipboardsync.presentation.monitoring.MonitoringStatusIndicator
+import com.siw.clipboardsync.utils.MimeTypeMapping
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -146,8 +149,11 @@ fun MainScreen(
             } else {
                 ClipboardHistoryList(
                     history = uiState.clipboardHistory,
+                    fileTransferState = uiState.fileTransferState,
                     onCopyToClipboard = { content -> viewModel.copyToClipboard(content) },
-                    onDeleteItem = { itemId -> viewModel.deleteClipboardItem(itemId) }
+                    onDeleteItem = { itemId -> viewModel.deleteClipboardItem(itemId) },
+                    onDownloadFile = { item -> viewModel.downloadFile(item) },
+                    isFileExceedsLimits = { item -> viewModel.isFileExceedsLimits(item) }
                 )
             }
             
@@ -380,8 +386,11 @@ private fun CurrentClipboardCard(
 @Composable
 private fun ClipboardHistoryList(
     history: List<ClipboardItem>,
+    fileTransferState: FileTransferState,
     onCopyToClipboard: (String) -> Unit,
-    onDeleteItem: (String) -> Unit
+    onDeleteItem: (String) -> Unit,
+    onDownloadFile: (ClipboardItem) -> Unit,
+    isFileExceedsLimits: (ClipboardItem) -> Boolean
 ) {
     if (history.isEmpty()) {
         Box(
@@ -401,8 +410,11 @@ private fun ClipboardHistoryList(
             items(history) { item ->
                 ClipboardHistoryItem(
                     item = item,
+                    fileTransferState = fileTransferState,
                     onCopy = { onCopyToClipboard(item.content) },
-                    onDelete = { onDeleteItem(item.id) }
+                    onDelete = { onDeleteItem(item.id) },
+                    onDownload = { onDownloadFile(item) },
+                    exceedsLimits = isFileExceedsLimits(item)
                 )
             }
         }
@@ -412,9 +424,16 @@ private fun ClipboardHistoryList(
 @Composable
 private fun ClipboardHistoryItem(
     item: ClipboardItem,
+    fileTransferState: FileTransferState,
     onCopy: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onDownload: () -> Unit,
+    exceedsLimits: Boolean
 ) {
+    val isFile = item.isFile() || item.isImage()
+    val isDownloading = fileTransferState is FileTransferState.Downloading && 
+                        fileTransferState.fileName == item.fileName
+    
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -426,24 +445,112 @@ private fun ClipboardHistoryItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = item.content.take(100),
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // File icon for file items
+                    if (isFile) {
+                        val mimeType = item.mimeType ?: MimeTypeMapping.getMimeTypeFromFileName(item.fileName ?: "")
+                        val iconRes = MimeTypeMapping.getIconForMimeType(mimeType)
+                        Icon(
+                            painter = painterResource(id = iconRes),
+                            contentDescription = "File type icon",
+                            modifier = Modifier.size(40.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                    }
                     
-                    Spacer(modifier = Modifier.height(4.dp))
-                    
-                    Text(
-                        text = formatDate(item.createdAt),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        if (isFile) {
+                            // File name
+                            Text(
+                                text = item.fileName ?: item.content.take(50),
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            
+                            Spacer(modifier = Modifier.height(2.dp))
+                            
+                            // File size and type
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val fileSize = item.fileSize ?: 0L
+                                Text(
+                                    text = formatFileSize(fileSize),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                
+                                val mimeType = item.mimeType
+                                if (!mimeType.isNullOrEmpty()) {
+                                    Text(
+                                        text = " • ${MimeTypeMapping.getDisplayName(mimeType)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                
+                                // Show warning if file exceeds limits
+                                if (exceedsLimits) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        Icons.Default.Warning,
+                                        contentDescription = "Exceeds limits",
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        } else {
+                            // Text content
+                            Text(
+                                text = item.content.take(100),
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(4.dp))
+                        
+                        // Timestamp and device info
+                        Text(
+                            text = "${formatDate(item.createdAt)} • ${item.getDisplayDeviceName()}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 
+                // Action buttons
                 Row {
+                    // Download button for file items
+                    if (isFile && !item.fileUrl.isNullOrEmpty()) {
+                        if (isDownloading) {
+                            // Show progress indicator while downloading
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            IconButton(onClick = onDownload) {
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = "Download",
+                                    tint = if (exceedsLimits) 
+                                        MaterialTheme.colorScheme.error 
+                                    else 
+                                        MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                    
+                    // Copy button
                     IconButton(onClick = onCopy) {
                         Icon(
                             Icons.Default.Add,
@@ -452,6 +559,7 @@ private fun ClipboardHistoryItem(
                         )
                     }
                     
+                    // Delete button
                     IconButton(onClick = onDelete) {
                         Icon(
                             Icons.Default.Delete,
@@ -461,7 +569,35 @@ private fun ClipboardHistoryItem(
                     }
                 }
             }
+            
+            // Show download progress bar if downloading this file
+            if (isDownloading) {
+                val downloadingState = fileTransferState as FileTransferState.Downloading
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { downloadingState.progress },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = "下载中... ${(downloadingState.progress * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
+    }
+}
+
+/**
+ * Format file size to human readable string
+ */
+private fun formatFileSize(size: Long): String {
+    return when {
+        size < 1024 -> "$size B"
+        size < 1024 * 1024 -> "${size / 1024} KB"
+        size < 1024 * 1024 * 1024 -> String.format("%.1f MB", size / (1024.0 * 1024.0))
+        else -> String.format("%.2f GB", size / (1024.0 * 1024.0 * 1024.0))
     }
 }
 
@@ -511,7 +647,7 @@ private fun IncomingUpdateCard(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "From: ${clipboardItem.deviceName}",
+                text = "From: ${clipboardItem.getDisplayDeviceName()}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer
             )

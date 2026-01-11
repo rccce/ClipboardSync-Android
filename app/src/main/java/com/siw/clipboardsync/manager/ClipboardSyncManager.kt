@@ -26,7 +26,9 @@ class ClipboardSyncManager @Inject constructor(
     private val clipboardRepository: ClipboardRepository,
     private val authRepository: AuthRepository,
     private val clipboardMonitorManager: ClipboardMonitorManager,
-    private val migrationManager: com.siw.clipboardsync.monitor.migration.MonitoringMigrationManager
+    private val migrationManager: com.siw.clipboardsync.monitor.migration.MonitoringMigrationManager,
+    private val fileSyncManager: FileSyncManager,
+    private val systemConfigManager: SystemConfigManager
 ) : ClipboardListener {
     
     companion object {
@@ -270,7 +272,8 @@ class ClipboardSyncManager @Inject constructor(
                     Log.d(TAG, "Image content sync not yet implemented")
                 }
                 "file" -> {
-                    Log.d(TAG, "File content sync not yet implemented")
+                    Log.d(TAG, "Handling file sync: ${clipboardItem.fileName}")
+                    handleIncomingFileSync(clipboardItem)
                 }
             }
             
@@ -284,6 +287,32 @@ class ClipboardSyncManager @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Failed to handle incoming clipboard update", e)
             _syncStatus.value = SyncStatus.ERROR
+        }
+    }
+    
+    /**
+     * Handle incoming file sync from other devices
+     */
+    private suspend fun handleIncomingFileSync(clipboardItem: ClipboardItem) {
+        try {
+            Log.d(TAG, "Processing incoming file sync: ${clipboardItem.fileName}")
+            
+            val result = fileSyncManager.handleReceivedFileSync(clipboardItem)
+            
+            if (result.isSuccess) {
+                val downloadedUri = result.getOrNull()
+                if (downloadedUri != null) {
+                    Log.d(TAG, "File downloaded successfully: $downloadedUri")
+                    // Copy file URI to clipboard
+                    ClipboardUtils.setUriToClipboard(context, downloadedUri)
+                } else {
+                    Log.d(TAG, "File exceeds limits, added to history only (manual download available)")
+                }
+            } else {
+                Log.e(TAG, "Failed to handle file sync: ${result.exceptionOrNull()?.message}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling incoming file sync", e)
         }
     }
     
@@ -745,6 +774,13 @@ class ClipboardSyncManager @Inject constructor(
             Log.i(TAG, "=== ADVANCED MONITORING CLIPBOARD CHANGE ===")
             Log.d(TAG, "Content type: ${content.type}, size: ${content.size} bytes, source: ${content.source}")
             
+            // Handle file content
+            if (content.type == ClipboardContent.ContentType.FILE || 
+                content.type == ClipboardContent.ContentType.URI) {
+                handleFileClipboardContent(content)
+                return
+            }
+            
             // Convert ClipboardContent to string for sync
             val contentString = when (content.type) {
                 ClipboardContent.ContentType.TEXT -> String(content.data, Charsets.UTF_8)
@@ -801,6 +837,43 @@ class ClipboardSyncManager @Inject constructor(
             
         } catch (e: Exception) {
             Log.e(TAG, "Error handling advanced monitoring clipboard change", e)
+        }
+    }
+    
+    /**
+     * Handle file content from clipboard
+     */
+    private suspend fun handleFileClipboardContent(content: ClipboardContent) {
+        try {
+            Log.d(TAG, "Handling file clipboard content")
+            
+            // Get URI from content
+            val uriString = String(content.data, Charsets.UTF_8)
+            val uri = android.net.Uri.parse(uriString)
+            
+            Log.d(TAG, "File URI: $uri")
+            
+            // Check if auto-sync is enabled (you can add a setting for this)
+            // For now, we'll auto-sync files that pass validation
+            
+            // Validate and upload file
+            val shouldSync = fileSyncManager.shouldAutoSync(uri)
+            if (!shouldSync) {
+                Log.d(TAG, "File does not meet sync criteria, skipping")
+                return
+            }
+            
+            Log.d(TAG, "Uploading and syncing file...")
+            val result = fileSyncManager.uploadAndSyncFile(uri)
+            
+            if (result.isSuccess) {
+                Log.i(TAG, "File synced successfully: ${result.getOrNull()?.fileName}")
+            } else {
+                Log.w(TAG, "File sync failed: ${result.exceptionOrNull()?.message}")
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling file clipboard content", e)
         }
     }
     

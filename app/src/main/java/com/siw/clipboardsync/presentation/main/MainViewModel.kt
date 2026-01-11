@@ -1,13 +1,17 @@
 package com.siw.clipboardsync.presentation.main
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.siw.clipboardsync.data.repository.AuthRepository
 import com.siw.clipboardsync.data.repository.ClipboardRepository
 import com.siw.clipboardsync.data.model.ClipboardItem
+import com.siw.clipboardsync.data.model.FileTransferState
 import com.siw.clipboardsync.manager.ServiceManager
 import com.siw.clipboardsync.manager.ClipboardSyncManager
+import com.siw.clipboardsync.manager.FileSyncManager
+import com.siw.clipboardsync.manager.SystemConfigManager
 import com.siw.clipboardsync.monitor.ClipboardMonitorManager
 import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.utils.ClipboardUtils
@@ -26,6 +30,8 @@ class MainViewModel @Inject constructor(
     private val serviceManager: ServiceManager,
     private val clipboardSyncManager: ClipboardSyncManager,
     private val monitorManager: ClipboardMonitorManager,
+    private val fileSyncManager: FileSyncManager,
+    private val systemConfigManager: SystemConfigManager,
     @ApplicationContext private val context: Context
 ) : ViewModel(), androidx.lifecycle.DefaultLifecycleObserver {
     
@@ -42,6 +48,8 @@ class MainViewModel @Inject constructor(
         initializeAndObserveClipboardSync()
         // Initialize and observe advanced monitoring
         initializeAndObserveMonitoring()
+        // Observe file transfer state
+        observeFileTransferState()
         autoStartClipboardSync()
         // Auto-start WebSocket connection when app starts
         autoStartWebSocketConnection()
@@ -513,6 +521,59 @@ class MainViewModel @Inject constructor(
             }
         }
     }
+    
+    private fun observeFileTransferState() {
+        viewModelScope.launch {
+            fileSyncManager.transferState.collect { state ->
+                _uiState.value = _uiState.value.copy(fileTransferState = state)
+            }
+        }
+    }
+    
+    /**
+     * Download a file from a clipboard item
+     */
+    fun downloadFile(item: ClipboardItem) {
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("MainViewModel", "Starting file download: ${item.fileName}")
+                val result = fileSyncManager.downloadFile(item)
+                if (result.isSuccess) {
+                    android.util.Log.d("MainViewModel", "File downloaded successfully: ${result.getOrNull()}")
+                } else {
+                    android.util.Log.e("MainViewModel", "File download failed: ${result.exceptionOrNull()?.message}")
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "下载失败: ${result.exceptionOrNull()?.message}"
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Error downloading file", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "下载失败: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Check if a file exceeds the configured limits
+     */
+    fun isFileExceedsLimits(item: ClipboardItem): Boolean {
+        if (!item.isFile() && !item.isImage()) return false
+        
+        val fileSize = item.fileSize ?: 0L
+        val mimeType = item.mimeType ?: "application/octet-stream"
+        
+        val maxFileSize = systemConfigManager.getCachedMaxFileSize()
+        val allowedTypes = systemConfigManager.getCachedAllowedFileTypes()
+        
+        val sizeExceeds = fileSize > maxFileSize
+        val typeNotAllowed = allowedTypes.isNotEmpty() && 
+                             !allowedTypes.contains(mimeType) &&
+                             !allowedTypes.contains("${mimeType.substringBefore("/")}/*")
+        
+        return sizeExceeds || typeNotAllowed
+    }
 
 
 }
@@ -532,5 +593,7 @@ data class MainUiState(
     val autoUpdateClipboard: Boolean = true,
     // Advanced monitoring state
     val isAdvancedMonitoring: Boolean = false,
-    val currentMonitoringMethod: MonitoringMethod? = null
+    val currentMonitoringMethod: MonitoringMethod? = null,
+    // File transfer state
+    val fileTransferState: FileTransferState = FileTransferState.Idle
 )

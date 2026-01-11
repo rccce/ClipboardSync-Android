@@ -1,6 +1,8 @@
 package com.siw.clipboardsync.data.network
 
 import com.siw.clipboardsync.data.model.*
+import okhttp3.MultipartBody
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -45,4 +47,22 @@ interface ApiService {
     
     @DELETE("api/v1/clipboard/{itemId}")
     suspend fun deleteClipboardItem(@Path("itemId") itemId: String): Response<Map<String, Any>>
+    
+    // System configuration
+    @GET("api/v1/system/config")
+    suspend fun getSystemConfig(): Response<SystemConfigResponse>
+    
+    // File upload
+    @Multipart
+    @POST("api/v1/files/upload")
+    suspend fun uploadFile(@Part file: MultipartBody.Part): Response<FileUploadApiResponse>
+    
+    // File download
+    @GET
+    @Streaming
+    suspend fun downloadFile(@Url fileUrl: String): Response<ResponseBody>
+    
+    // File sync to clipboard
+    @POST("api/v1/clipboard/sync")
+    suspend fun syncFileClipboard(@Body request: FileSyncRequest): Response<ClipboardSyncResponse>
 }
