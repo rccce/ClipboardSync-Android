@@ -51,9 +51,8 @@ class SystemStatusViewModel @Inject constructor(
     fun startMonitoring() {
         viewModelScope.launch {
             try {
-                // Initialize and start monitoring
-                monitorManager.initialize()
-                monitorManager.startMonitoring()
+                // Use ClipboardSyncManager to enable advanced monitoring with proper listener
+                clipboardSyncManager.enableAdvancedMonitoring()
                 
                 // Refresh status to show updated monitoring state
                 refreshSystemStatus()
@@ -71,7 +70,7 @@ class SystemStatusViewModel @Inject constructor(
     fun stopMonitoring() {
         viewModelScope.launch {
             try {
-                monitorManager.stopMonitoring()
+                clipboardSyncManager.disableAdvancedMonitoring()
                 
                 // Refresh status to show updated monitoring state
                 refreshSystemStatus()
@@ -152,6 +151,43 @@ class SystemStatusViewModel @Inject constructor(
         } catch (e: Exception) {
             _uiState.value = _uiState.value.copy(
                 errorMessage = "Failed to open accessibility settings: ${e.message}"
+            )
+        }
+    }
+    
+    /**
+     * Request Shizuku permission
+     */
+    fun requestShizukuPermission() {
+        viewModelScope.launch {
+            try {
+                val success = systemStatusService.requestShizukuPermission()
+                if (success) {
+                    // Refresh status after a short delay to allow permission to update
+                    kotlinx.coroutines.delay(1000)
+                    refreshSystemStatus()
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "Shizuku is not running. Please start Shizuku first."
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "Error requesting Shizuku permission: ${e.message}"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Open Shizuku app or install it
+     */
+    fun openShizukuApp() {
+        try {
+            systemStatusService.openShizukuApp()
+        } catch (e: Exception) {
+            _uiState.value = _uiState.value.copy(
+                errorMessage = "Failed to open Shizuku: ${e.message}"
             )
         }
     }

@@ -11,6 +11,7 @@ import com.siw.clipboardsync.monitor.ClipboardMonitor
 import com.siw.clipboardsync.monitor.AccessibilityClipboardMonitor
 import com.siw.clipboardsync.monitor.ForegroundServiceClipboardMonitor
 import com.siw.clipboardsync.monitor.PollingClipboardMonitor
+import com.siw.clipboardsync.monitor.ShizukuClipboardMonitor
 import com.siw.clipboardsync.monitor.SystemLevelClipboardMonitor
 import com.siw.clipboardsync.service.RootDetectionService
 import com.siw.clipboardsync.utils.AccessibilityPermissionManager
@@ -115,6 +116,7 @@ class ClipboardErrorHandler @Inject constructor(
             is ClipboardError.ServiceDisconnected -> handleServiceDisconnected(currentMethod)
             is ClipboardError.ContentTooLarge -> handleContentTooLarge(error)
             is ClipboardError.AccessibilityServiceUnavailable -> handleAccessibilityServiceUnavailable()
+            is ClipboardError.ShizukuUnavailable -> handleShizukuUnavailable()
             is ClipboardError.ForegroundServiceFailed -> handleForegroundServiceFailed(currentMethod)
             is ClipboardError.NativeLibraryError -> handleNativeLibraryError(error, currentMethod)
             is ClipboardError.XposedFrameworkError -> handleXposedFrameworkError(currentMethod)
@@ -369,6 +371,12 @@ class ClipboardErrorHandler @Inject constructor(
         return null
     }
     
+    private suspend fun handleShizukuUnavailable(): ClipboardMonitor? {
+        // Shizuku is not available, try next fallback
+        Log.w(TAG, "Shizuku is not available, trying next fallback")
+        return tryNextFallback(MonitoringMethod.SHIZUKU)
+    }
+    
     private suspend fun handleForegroundServiceFailed(currentMethod: MonitoringMethod): ClipboardMonitor? {
         notificationManager.showForegroundServicePermissionNeeded()
         return tryNextFallback(currentMethod)
@@ -560,6 +568,14 @@ class ClipboardErrorHandler @Inject constructor(
                     false
                 }
             }
+            MonitoringMethod.SHIZUKU -> {
+                // Check if Shizuku is available
+                try {
+                    rikka.shizuku.Shizuku.pingBinder()
+                } catch (e: Exception) {
+                    false
+                }
+            }
             MonitoringMethod.ACCESSIBILITY_SERVICE -> {
                 accessibilityPermissionManager.isAccessibilityServiceEnabled()
             }
@@ -577,6 +593,9 @@ class ClipboardErrorHandler @Inject constructor(
             }
             MonitoringMethod.READ_LOGS -> {
                 null // LogcatClipboardMonitor()
+            }
+            MonitoringMethod.SHIZUKU -> {
+                ShizukuClipboardMonitor(context)
             }
             MonitoringMethod.ACCESSIBILITY_SERVICE -> {
                 null // AccessibilityClipboardMonitor()

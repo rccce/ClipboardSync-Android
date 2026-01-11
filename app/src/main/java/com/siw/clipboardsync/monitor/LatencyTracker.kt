@@ -152,6 +152,7 @@ class LatencyTracker @Inject constructor() {
             MonitoringMethod.SYSTEM_HOOKS -> TARGET_LATENCY_ROOT
             MonitoringMethod.XPOSED_HOOKS -> TARGET_LATENCY_XPOSED
             MonitoringMethod.READ_LOGS -> TARGET_LATENCY_READ_LOGS
+            MonitoringMethod.SHIZUKU -> TARGET_LATENCY_ACCESSIBILITY // Similar to accessibility
             MonitoringMethod.ACCESSIBILITY_SERVICE -> TARGET_LATENCY_ACCESSIBILITY
             MonitoringMethod.FOREGROUND_SERVICE -> TARGET_LATENCY_POLLING
             MonitoringMethod.POLLING_FALLBACK -> TARGET_LATENCY_POLLING

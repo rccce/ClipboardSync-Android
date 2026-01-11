@@ -30,6 +30,7 @@ class MonitoringStrategyFactory @Inject constructor(
         
         // Priority values for different monitoring methods (higher = better)
         private const val SYSTEM_HOOKS_PRIORITY = 100
+        private const val SHIZUKU_PRIORITY = 95  // High priority - provides background clipboard access without root on Android 10+
         private const val XPOSED_HOOKS_PRIORITY = 90
         private const val READ_LOGS_PRIORITY = 85
         private const val ACCESSIBILITY_SERVICE_PRIORITY = 70
@@ -123,6 +124,44 @@ class MonitoringStrategyFactory @Inject constructor(
                 )
             )
             Log.d(TAG, "Xposed hooks strategy available")
+        }
+        
+        // Shizuku - provides ADB-level permissions without root
+        // Excellent for Android 10+ background clipboard access
+        val shizukuAvailable = isShizukuAvailableAndPermitted()
+        if (shizukuAvailable) {
+            strategies.add(
+                MonitoringStrategy(
+                    method = MonitoringMethod.SHIZUKU,
+                    priority = SHIZUKU_PRIORITY,
+                    isAvailable = true,
+                    capabilities = setOf(
+                        MonitoringStrategy.Capability.BACKGROUND_ACCESS,
+                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
+                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES
+                    )
+                )
+            )
+            Log.d(TAG, "Shizuku strategy available (running and permitted)")
+        } else {
+            // Check if Shizuku is installed but not running or not permitted
+            val shizukuInstalled = isShizukuInstalled()
+            val shizukuRunning = isShizukuRunning()
+            Log.d(TAG, "Shizuku strategy NOT available - installed=$shizukuInstalled, running=$shizukuRunning, permitted=${shizukuRunning && isShizukuPermitted()}")
+            
+            // Add as unavailable option so users know it exists
+            strategies.add(
+                MonitoringStrategy(
+                    method = MonitoringMethod.SHIZUKU,
+                    priority = SHIZUKU_PRIORITY,
+                    isAvailable = false,
+                    capabilities = setOf(
+                        MonitoringStrategy.Capability.BACKGROUND_ACCESS,
+                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
+                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES
+                    )
+                )
+            )
         }
         
         // READ_LOGS permission-based monitoring
@@ -403,11 +442,71 @@ class MonitoringStrategyFactory @Inject constructor(
             MonitoringMethod.READ_LOGS -> {
                 isReadLogsPermissionGranted()
             }
+            MonitoringMethod.SHIZUKU -> {
+                try {
+                    rikka.shizuku.Shizuku.pingBinder()
+                } catch (e: Exception) {
+                    false
+                }
+            }
             MonitoringMethod.ACCESSIBILITY_SERVICE -> {
                 accessibilityPermissionManager.isAccessibilityServiceEnabled()
             }
             MonitoringMethod.FOREGROUND_SERVICE -> true // Always available
             MonitoringMethod.POLLING_FALLBACK -> true // Always available
+        }
+    }
+    
+    /**
+     * Checks if Shizuku is installed on the device.
+     */
+    private fun isShizukuInstalled(): Boolean {
+        return try {
+            context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
+    
+    /**
+     * Checks if Shizuku service is running.
+     */
+    private fun isShizukuRunning(): Boolean {
+        return try {
+            rikka.shizuku.Shizuku.pingBinder()
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    /**
+     * Checks if we have Shizuku permission.
+     */
+    private fun isShizukuPermitted(): Boolean {
+        return try {
+            rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    /**
+     * Checks if Shizuku is available and we have permission to use it.
+     */
+    private fun isShizukuAvailableAndPermitted(): Boolean {
+        return try {
+            val running = rikka.shizuku.Shizuku.pingBinder()
+            if (!running) {
+                Log.d(TAG, "Shizuku is not running")
+                return false
+            }
+            val permitted = rikka.shizuku.Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            Log.d(TAG, "Shizuku running=$running, permitted=$permitted")
+            permitted
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking Shizuku availability: ${e.message}")
+            false
         }
     }
     

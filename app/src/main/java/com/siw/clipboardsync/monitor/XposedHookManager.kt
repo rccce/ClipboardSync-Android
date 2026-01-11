@@ -62,11 +62,38 @@ class XposedHookManager @Inject constructor(
     }
     
     /**
-     * Checks if Xposed/LSPosed framework is available on this device.
+     * Checks if Xposed/LSPosed framework is available AND our app is actually hooked.
+     * 
+     * IMPORTANT: Just detecting that LSPosed is installed is NOT enough.
+     * We need to verify that:
+     * 1. The Xposed framework is running
+     * 2. Our clipboard hook module is enabled
+     * 3. Our app is actually being hooked
+     * 
+     * Without these checks, we might incorrectly report Xposed as available
+     * when it's not actually working for clipboard monitoring.
      */
     fun isAvailable(): Boolean {
         return try {
-            detectXposedFramework() != XposedFrameworkType.NONE
+            // First check if any Xposed framework is detected
+            val frameworkType = detectXposedFramework()
+            if (frameworkType == XposedFrameworkType.NONE) {
+                Log.d(TAG, "No Xposed framework detected")
+                return false
+            }
+            
+            // CRITICAL: Check if we're actually running in an Xposed environment
+            // This means our app has been hooked by the Xposed module
+            val isHooked = isRunningInXposedEnvironment()
+            if (!isHooked) {
+                Log.w(TAG, "Xposed framework detected ($frameworkType) but our app is NOT hooked. " +
+                        "Make sure the clipboard hook module is enabled in LSPosed Manager " +
+                        "and our app is in the module's scope.")
+                return false
+            }
+            
+            Log.i(TAG, "Xposed framework available and our app is hooked: $frameworkType")
+            true
         } catch (e: Exception) {
             Log.e(TAG, "Error checking Xposed framework availability", e)
             false
@@ -552,13 +579,86 @@ class XposedHookManager @Inject constructor(
     
     /**
      * Checks if the current process is running in an Xposed environment.
+     * This verifies that our app is actually being hooked by Xposed/LSPosed.
+     * 
+     * Multiple detection methods are used:
+     * 1. Check for Xposed bridge version system properties
+     * 2. Check if XposedBridge class is loaded in our process
+     * 3. Check for LSPosed API class
+     * 4. Check for our custom hook indicator (set by ClipboardHookModule)
      */
     fun isRunningInXposedEnvironment(): Boolean {
         return try {
-            // Check for Xposed environment indicators
-            System.getProperty("xposed.bridge.version") != null ||
-            System.getProperty("lsposed.bridge.version") != null
+            // Method 1: Check system properties set by Xposed
+            val xposedBridgeVersion = System.getProperty("xposed.bridge.version")
+            if (xposedBridgeVersion != null) {
+                Log.d(TAG, "Xposed bridge version detected: $xposedBridgeVersion")
+                return true
+            }
+            
+            val lsposedBridgeVersion = System.getProperty("lsposed.bridge.version")
+            if (lsposedBridgeVersion != null) {
+                Log.d(TAG, "LSPosed bridge version detected: $lsposedBridgeVersion")
+                return true
+            }
+            
+            // Method 2: Check if XposedBridge class is loaded in our process
+            // This only works if our app is actually being hooked
+            try {
+                val xposedBridgeClass = Class.forName("de.robv.android.xposed.XposedBridge")
+                // If we can load this class, we're in an Xposed environment
+                Log.d(TAG, "XposedBridge class found in our process")
+                return true
+            } catch (e: ClassNotFoundException) {
+                // Class not found - not hooked by traditional Xposed
+            }
+            
+            // Method 3: Check for LSPosed API class
+            try {
+                val lsposedApiClass = Class.forName("io.github.libxposed.api.XposedInterface")
+                Log.d(TAG, "LSPosed API class found in our process")
+                return true
+            } catch (e: ClassNotFoundException) {
+                // Class not found - not hooked by LSPosed
+            }
+            
+            // Method 4: Check for our custom hook indicator
+            // Our ClipboardHookModule sets this when it hooks our app
+            try {
+                val hookIndicator = System.getProperty("clipboard.sync.hooked")
+                if (hookIndicator == "true") {
+                    Log.d(TAG, "Custom hook indicator found")
+                    return true
+                }
+            } catch (e: Exception) {
+                // Property not available
+            }
+            
+            // Method 5: Check stack trace for Xposed-related classes
+            // This is a fallback method - but we need to exclude our own classes
+            try {
+                val stackTrace = Thread.currentThread().stackTrace
+                for (element in stackTrace) {
+                    val className = element.className
+                    // Skip our own classes that contain "xposed" in the name
+                    if (className.startsWith("com.siw.clipboardsync")) {
+                        continue
+                    }
+                    if (className.contains("xposed", ignoreCase = true) ||
+                        className.contains("lsposed", ignoreCase = true) ||
+                        className.contains("edxposed", ignoreCase = true)) {
+                        Log.d(TAG, "Xposed-related class found in stack trace: $className")
+                        return true
+                    }
+                }
+            } catch (e: Exception) {
+                // Stack trace check failed
+            }
+            
+            Log.d(TAG, "No evidence of Xposed hook in our process")
+            false
         } catch (e: Exception) {
+            Log.e(TAG, "Error checking Xposed environment", e)
             false
         }
     }

@@ -13,11 +13,13 @@ import com.siw.clipboardsync.data.model.*
 import com.siw.clipboardsync.manager.ClipboardSyncManager
 import com.siw.clipboardsync.manager.ServiceManager
 import com.siw.clipboardsync.monitor.ClipboardMonitorManager
+import com.siw.clipboardsync.monitor.ShizukuClipboardMonitor
 // import com.siw.clipboardsync.monitor.IMEClipboardManager
 import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.FileReader
 import javax.inject.Inject
@@ -206,16 +208,129 @@ class SystemStatusService @Inject constructor(
             }
             val hasBootPermission = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECEIVE_BOOT_COMPLETED) == PackageManager.PERMISSION_GRANTED
             
+            val shizukuStatus = getShizukuStatus()
+            
             PermissionStatus(
                 hasRequiredPermissions = hasRequiredPermissions,
                 missingPermissions = missingPermissions,
                 hasAccessibilityPermission = hasAccessibilityPermission,
                 hasNotificationPermission = hasNotificationPermission,
-                hasBootPermission = hasBootPermission
+                hasBootPermission = hasBootPermission,
+                shizukuStatus = shizukuStatus
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error getting permission status", e)
             PermissionStatus(false, emptyList(), false, false, false)
+        }
+    }
+    
+    /**
+     * Get Shizuku status
+     */
+    private fun getShizukuStatus(): ShizukuStatus {
+        return try {
+            val isInstalled = isShizukuInstalled()
+            val isRunning = if (isInstalled) {
+                try {
+                    Shizuku.pingBinder()
+                } catch (e: Exception) {
+                    false
+                }
+            } else false
+            
+            val hasPermission = if (isRunning) {
+                try {
+                    Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+                } catch (e: Exception) {
+                    false
+                }
+            } else false
+            
+            val version = if (isRunning) {
+                try {
+                    Shizuku.getVersion()
+                } catch (e: Exception) {
+                    -1
+                }
+            } else -1
+            
+            ShizukuStatus(
+                isInstalled = isInstalled,
+                isRunning = isRunning,
+                hasPermission = hasPermission,
+                version = version
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting Shizuku status", e)
+            ShizukuStatus()
+        }
+    }
+    
+    /**
+     * Check if Shizuku app is installed
+     */
+    private fun isShizukuInstalled(): Boolean {
+        return try {
+            context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
+    
+    /**
+     * Request Shizuku permission
+     */
+    fun requestShizukuPermission(): Boolean {
+        return try {
+            if (Shizuku.pingBinder()) {
+                if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                    Shizuku.requestPermission(ShizukuClipboardMonitor.SHIZUKU_PERMISSION_REQUEST_CODE)
+                    true
+                } else {
+                    true // Already has permission
+                }
+            } else {
+                Log.w(TAG, "Shizuku is not running")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error requesting Shizuku permission", e)
+            false
+        }
+    }
+    
+    /**
+     * Open Shizuku app or Play Store if not installed
+     */
+    fun openShizukuApp() {
+        try {
+            if (isShizukuInstalled()) {
+                // Open Shizuku app
+                val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                if (intent != null) {
+                    intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    context.startActivity(intent)
+                }
+            } else {
+                // Open Play Store to install Shizuku
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    data = android.net.Uri.parse("market://details?id=moe.shizuku.privileged.api")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    // Play Store not available, open browser
+                    val browserIntent = Intent(Intent.ACTION_VIEW).apply {
+                        data = android.net.Uri.parse("https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(browserIntent)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening Shizuku app", e)
         }
     }
     

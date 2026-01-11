@@ -79,7 +79,8 @@
         <service
             android:name=".service.ClipboardAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true">
+            android:exported="true"
+            android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
@@ -110,6 +111,15 @@
                 <action android:name="com.siw.clipboardsync.CLIPBOARD_CHANGED" />
             </intent-filter>
         </receiver>
+        
+        <!-- Shizuku provider for non-root clipboard access -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 
 </manifest>

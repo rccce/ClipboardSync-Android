@@ -77,6 +77,15 @@ sealed class ClipboardError(
     )
     
     /**
+     * Shizuku is not installed or not running.
+     */
+    object ShizukuUnavailable : ClipboardError(
+        message = "Shizuku is not installed or not running",
+        errorCode = "SHIZUKU_UNAVAILABLE",
+        isRecoverable = true
+    )
+    
+    /**
      * Foreground service failed to start or maintain.
      */
     data class ForegroundServiceFailed(
@@ -229,6 +238,7 @@ sealed class ClipboardError(
             is ServiceDisconnected -> "Monitoring service disconnected. Attempting to reconnect."
             is ContentTooLarge -> "Clipboard content is too large to sync (${actualSize / 1024}KB)."
             is AccessibilityServiceUnavailable -> "Please enable accessibility service for clipboard monitoring."
+            is ShizukuUnavailable -> "Please install and start Shizuku app for clipboard monitoring."
             is ForegroundServiceFailed -> "Background monitoring service failed. Please restart the app."
             is NativeLibraryError -> "System library error. This device may not be supported."
             is XposedFrameworkError -> "Xposed framework error. Switching to alternative method."

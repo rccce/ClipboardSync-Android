@@ -623,11 +623,24 @@ class ClipboardSyncManager @Inject constructor(
     }
     
     /**
-     * Check if advanced monitoring is available
+     * Check if advanced monitoring is available.
+     * This is a suspend function that ensures the ClipboardMonitorManager is initialized first.
      */
-    fun isAdvancedMonitoringAvailable(): Boolean {
+    suspend fun isAdvancedMonitoringAvailable(): Boolean {
+        // Ensure ClipboardMonitorManager is initialized
+        clipboardMonitorManager.initialize()
+        
+        // Wait for fallback chain to be populated (max 5 seconds)
+        var waitCount = 0
+        while (clipboardMonitorManager.getMonitoringStatus().availableStrategies.isEmpty() && waitCount < 50) {
+            kotlinx.coroutines.delay(100)
+            waitCount++
+        }
+        
         val status = clipboardMonitorManager.getMonitoringStatus()
-        return status.availableStrategies.isNotEmpty()
+        val available = status.availableStrategies.isNotEmpty()
+        Log.d(TAG, "isAdvancedMonitoringAvailable: $available (${status.availableStrategies.size} strategies)")
+        return available
     }
     
     /**
@@ -722,7 +735,8 @@ class ClipboardSyncManager @Inject constructor(
     
     override suspend fun onClipboardChanged(content: ClipboardContent, timestamp: Long) {
         try {
-            Log.d(TAG, "Advanced monitoring detected clipboard change: ${content.type}")
+            Log.i(TAG, "=== ADVANCED MONITORING CLIPBOARD CHANGE ===")
+            Log.d(TAG, "Content type: ${content.type}, size: ${content.size} bytes, source: ${content.source}")
             
             // Convert ClipboardContent to string for sync
             val contentString = when (content.type) {
@@ -733,6 +747,8 @@ class ClipboardSyncManager @Inject constructor(
                     return
                 }
             }
+            
+            Log.d(TAG, "Content string: ${contentString.take(100)}...")
             
             // Check if content should be synced
             if (!ClipboardUtils.shouldSyncContent(contentString)) {
@@ -750,12 +766,14 @@ class ClipboardSyncManager @Inject constructor(
                 else -> "text"
             }
             
+            Log.d(TAG, "Syncing content via advanced monitoring...")
             val result = syncLocalClipboard(contentString, contentType)
             if (result.isSuccess) {
-                Log.d(TAG, "Advanced monitoring sync completed successfully")
+                Log.i(TAG, "Advanced monitoring sync completed successfully")
             } else {
                 Log.w(TAG, "Advanced monitoring sync failed: ${result.exceptionOrNull()?.message}")
             }
+            Log.i(TAG, "=== ADVANCED MONITORING CLIPBOARD CHANGE END ===")
             
         } catch (e: Exception) {
             Log.e(TAG, "Error handling advanced monitoring clipboard change", e)

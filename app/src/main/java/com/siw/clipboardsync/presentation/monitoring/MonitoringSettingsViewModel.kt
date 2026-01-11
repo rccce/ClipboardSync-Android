@@ -3,6 +3,7 @@ package com.siw.clipboardsync.presentation.monitoring
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.siw.clipboardsync.manager.ClipboardSyncManager
 import com.siw.clipboardsync.monitor.ClipboardMonitorManager
 import com.siw.clipboardsync.monitor.CpuUsageTracker
 import com.siw.clipboardsync.monitor.model.ClipboardError
@@ -21,6 +22,7 @@ import javax.inject.Inject
 @HiltViewModel
 class MonitoringSettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val clipboardSyncManager: ClipboardSyncManager,
     private val monitorManager: ClipboardMonitorManager,
     private val rootDetectionService: RootDetectionService,
     private val accessibilityPermissionManager: AccessibilityPermissionManager,
@@ -122,9 +124,9 @@ class MonitoringSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 if (_uiState.value.isMonitoring) {
-                    monitorManager.stopMonitoring()
+                    clipboardSyncManager.disableAdvancedMonitoring()
                 } else {
-                    monitorManager.startMonitoring()
+                    clipboardSyncManager.enableAdvancedMonitoring()
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -163,6 +165,7 @@ class MonitoringSettingsViewModel @Inject constructor(
             MonitoringMethod.SYSTEM_HOOKS -> monitoringConfig.copy(enableSystemHooks = enabled)
             MonitoringMethod.XPOSED_HOOKS -> monitoringConfig.copy(enableXposedHooks = enabled)
             MonitoringMethod.READ_LOGS -> monitoringConfig // READ_LOGS doesn't have a config toggle
+            MonitoringMethod.SHIZUKU -> monitoringConfig // Shizuku doesn't have a config toggle
             MonitoringMethod.ACCESSIBILITY_SERVICE -> monitoringConfig.copy(enableAccessibilityService = enabled)
             MonitoringMethod.FOREGROUND_SERVICE -> monitoringConfig.copy(enableForegroundService = enabled)
             MonitoringMethod.POLLING_FALLBACK -> monitoringConfig.copy(enablePollingFallback = enabled)

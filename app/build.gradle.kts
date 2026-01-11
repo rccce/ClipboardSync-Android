@@ -77,6 +77,13 @@ dependencies {
     // Xposed API (compileOnly - provided by framework at runtime)
     compileOnly("de.robv.android.xposed:api:82")
     
+    // Shizuku for non-root clipboard access
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+    
+    // Hidden API bypass for accessing system APIs
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
+    
     // Core Android
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

@@ -14,6 +14,9 @@ enum class MonitoringMethod {
     /** READ_LOGS permission-based logcat monitoring - medium-high priority */
     READ_LOGS,
     
+    /** Shizuku-based monitoring - medium-high priority, works without root */
+    SHIZUKU,
+    
     /** Accessibility service-based monitoring - medium priority */
     ACCESSIBILITY_SERVICE,
     

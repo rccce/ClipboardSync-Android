@@ -67,21 +67,32 @@ class ClipboardMonitorManager @Inject constructor(
      * Initializes the monitor manager and prepares monitoring strategies.
      */
     suspend fun initialize() {
-        if (isInitialized.compareAndSet(false, true)) {
-            Log.d(TAG, "Initializing clipboard monitor manager")
-            
-            try {
-                // Create fallback chain based on device capabilities
-                fallbackChain = strategyFactory.createFallbackChain()
-                currentFallbackIndex = 0
-                
-                Log.i(TAG, "Monitor manager initialized with ${fallbackChain.size} available strategies")
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize monitor manager", e)
-                isInitialized.set(false)
-                throw e
+        if (isInitialized.get()) {
+            // Already initialized, wait for completion if still in progress
+            return
+        }
+        
+        // Use synchronized block to prevent concurrent initialization
+        synchronized(this) {
+            if (isInitialized.get()) {
+                return
             }
+            isInitialized.set(true)
+        }
+        
+        Log.d(TAG, "Initializing clipboard monitor manager")
+        
+        try {
+            // Create fallback chain based on device capabilities
+            fallbackChain = strategyFactory.createFallbackChain()
+            currentFallbackIndex = 0
+            
+            Log.i(TAG, "Monitor manager initialized with ${fallbackChain.size} available strategies")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize monitor manager", e)
+            isInitialized.set(false)
+            throw e
         }
     }
     
@@ -90,8 +101,25 @@ class ClipboardMonitorManager @Inject constructor(
      * @param listener the clipboard listener to receive events
      */
     suspend fun startMonitoring(listener: ClipboardListener? = null) {
+        // Ensure initialization is complete
         if (!isInitialized.get()) {
+            Log.d(TAG, "Initializing before starting monitoring")
             initialize()
+        }
+        
+        // Wait for fallback chain to be populated
+        var waitCount = 0
+        while (fallbackChain.isEmpty() && waitCount < 50) {
+            Log.d(TAG, "Waiting for fallback chain to be populated...")
+            kotlinx.coroutines.delay(100)
+            waitCount++
+        }
+        
+        if (fallbackChain.isEmpty()) {
+            Log.e(TAG, "Fallback chain is empty after waiting, cannot start monitoring")
+            throw ClipboardMonitorException(
+                ClipboardError.NoMonitoringMethodAvailable
+            )
         }
         
         if (_isMonitoring.value) {
@@ -333,6 +361,7 @@ class ClipboardMonitorManager @Inject constructor(
             MonitoringMethod.SYSTEM_HOOKS,
             MonitoringMethod.XPOSED_HOOKS -> systemLevelMonitor
             MonitoringMethod.READ_LOGS -> systemLevelMonitor // Use system level monitor for logcat
+            MonitoringMethod.SHIZUKU -> ShizukuClipboardMonitor(context)
             MonitoringMethod.ACCESSIBILITY_SERVICE -> accessibilityMonitor
             MonitoringMethod.FOREGROUND_SERVICE -> foregroundServiceMonitor
             MonitoringMethod.POLLING_FALLBACK -> pollingMonitor
@@ -341,8 +370,15 @@ class ClipboardMonitorManager @Inject constructor(
     
     // ClipboardListener implementation - acts as intermediate listener
     override suspend fun onClipboardChanged(content: ClipboardContent, timestamp: Long) {
-        Log.v(TAG, "Clipboard changed: ${content.type} (${content.size} bytes)")
-        externalListener.get()?.onClipboardChanged(content, timestamp)
+        Log.d(TAG, "Clipboard changed received: ${content.type} (${content.size} bytes)")
+        val listener = externalListener.get()
+        if (listener != null) {
+            Log.d(TAG, "Forwarding clipboard change to external listener")
+            listener.onClipboardChanged(content, timestamp)
+            Log.d(TAG, "External listener notified successfully")
+        } else {
+            Log.w(TAG, "No external listener set, cannot forward clipboard change!")
+        }
     }
     
     override suspend fun onMonitoringError(error: ClipboardError) {

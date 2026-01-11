@@ -277,76 +277,113 @@ class RootDetectionService @Inject constructor(
     }
     
     /**
-     * Detects if Xposed or LSPosed framework is available
+     * Detects if Xposed or LSPosed framework is available AND our app is actually hooked.
+     * 
+     * IMPORTANT: Just detecting that LSPosed is installed is NOT enough for clipboard monitoring.
+     * We need to verify that our app is actually being hooked by the Xposed module.
+     * 
+     * This method returns true ONLY if:
+     * 1. Xposed/LSPosed framework is installed AND
+     * 2. Our app is actually running in an Xposed environment (being hooked)
      */
     private fun checkXposedFramework(): Boolean {
-        // Method 1: Check for LSPosed manager app (may be hidden)
-        if (isPackageInstalled("org.lsposed.manager")) {
-            Log.d(TAG, "LSPosed manager app detected")
-            return true
-        }
+        // First, check if we're actually running in an Xposed environment
+        // This is the most reliable indicator that our app is being hooked
         
-        // Method 2: Check for LSPosed module directory using root
-        val lsposedPaths = arrayOf(
-            "/data/adb/lspd",
-            "/data/adb/modules/zygisk_lsposed",
-            "/data/adb/modules/riru_lsposed"
-        )
-        for (path in lsposedPaths) {
-            // First try without root (in case we have access)
-            if (File(path).exists()) {
-                Log.d(TAG, "LSPosed path detected (direct): $path")
+        // Method 1: Check system properties set by Xposed when hooking our app
+        try {
+            val xposedBridgeVersion = System.getProperty("xposed.bridge.version")
+            if (xposedBridgeVersion != null) {
+                Log.d(TAG, "Xposed bridge version detected: $xposedBridgeVersion - app is hooked")
                 return true
             }
-            // Try with root command using ls instead of test
-            if (checkPathExistsWithRoot(path)) {
-                Log.d(TAG, "LSPosed path detected (via root): $path")
+            
+            val lsposedBridgeVersion = System.getProperty("lsposed.bridge.version")
+            if (lsposedBridgeVersion != null) {
+                Log.d(TAG, "LSPosed bridge version detected: $lsposedBridgeVersion - app is hooked")
                 return true
             }
+        } catch (e: Exception) {
+            // Properties not available
         }
         
-        // Method 3: Check for Xposed/LSPosed classes (only works if we're hooked)
+        // Method 2: Check if XposedBridge class is loaded in our process
+        // This only works if our app is actually being hooked
         try {
             Class.forName("de.robv.android.xposed.XposedBridge")
-            Log.d(TAG, "XposedBridge class detected")
+            Log.d(TAG, "XposedBridge class detected in our process - app is hooked")
             return true
         } catch (e: ClassNotFoundException) {
-            // Not loaded
+            // Not loaded - our app is not being hooked by traditional Xposed
         }
         
+        // Method 3: Check for LSPosed API class
         try {
             Class.forName("io.github.libxposed.api.XposedInterface")
-            Log.d(TAG, "LSPosed API class detected")
+            Log.d(TAG, "LSPosed API class detected in our process - app is hooked")
             return true
         } catch (e: ClassNotFoundException) {
-            // Not loaded
+            // Not loaded - our app is not being hooked by LSPosed
         }
         
-        // Method 4: Check for EdXposed manager
-        if (isPackageInstalled("org.meowcat.edxposed.manager") || 
-            isPackageInstalled("com.solohsu.android.edxp.manager")) {
-            Log.d(TAG, "EdXposed manager app detected")
-            return true
-        }
-        
-        // Method 5: Check system properties
+        // Method 4: Check for our custom hook indicator
         try {
-            val xposedVersion = System.getProperty("xposed.version")
-            if (xposedVersion != null) {
-                Log.d(TAG, "Xposed version property detected: $xposedVersion")
+            val hookIndicator = System.getProperty("clipboard.sync.hooked")
+            if (hookIndicator == "true") {
+                Log.d(TAG, "Custom hook indicator found - app is hooked")
                 return true
             }
         } catch (e: Exception) {
             // Property not available
         }
         
-        // Method 6: Check LSPosed config database exists (via root)
-        if (checkPathExistsWithRoot("/data/adb/lspd/config/modules_config.db")) {
-            Log.d(TAG, "LSPosed config database detected")
+        // If we reach here, Xposed framework might be installed but our app is NOT being hooked
+        // Log this for debugging purposes
+        val frameworkInstalled = isXposedFrameworkInstalled()
+        if (frameworkInstalled) {
+            Log.w(TAG, "Xposed/LSPosed framework is INSTALLED but our app is NOT being hooked. " +
+                    "Make sure the clipboard hook module is enabled in LSPosed Manager " +
+                    "and our app (com.siw.clipboardsync) is in the module's scope.")
+        } else {
+            Log.d(TAG, "No Xposed/LSPosed framework detected")
+        }
+        
+        return false
+    }
+    
+    /**
+     * Checks if Xposed/LSPosed framework is installed (but not necessarily hooking our app).
+     * This is a separate check from checkXposedFramework() which verifies actual hooking.
+     */
+    private fun isXposedFrameworkInstalled(): Boolean {
+        // Check for LSPosed manager app
+        if (isPackageInstalled("org.lsposed.manager")) {
             return true
         }
         
-        Log.d(TAG, "No Xposed/LSPosed framework detected")
+        // Check for EdXposed manager
+        if (isPackageInstalled("org.meowcat.edxposed.manager") || 
+            isPackageInstalled("com.solohsu.android.edxp.manager")) {
+            return true
+        }
+        
+        // Check for traditional Xposed installer
+        if (isPackageInstalled("de.robv.android.xposed.installer")) {
+            return true
+        }
+        
+        // Check for LSPosed module directories (with root)
+        val lsposedPaths = arrayOf(
+            "/data/adb/lspd",
+            "/data/adb/modules/zygisk_lsposed",
+            "/data/adb/modules/riru_lsposed"
+        )
+        for (path in lsposedPaths) {
+            if (java.io.File(path).exists() || checkPathExistsWithRoot(path)) {
+                return true
+            }
+        }
+        
         return false
     }
     

@@ -181,6 +181,34 @@ fun SystemStatusScreen(
                         )
                     }
                     
+                    // Shizuku Status Card
+                    item {
+                        val shizukuStatus = status.permissionStatus.shizukuStatus
+                        SystemStatusCard(
+                            title = "Shizuku (Advanced Clipboard)",
+                            icon = Icons.Default.Build,
+                            status = shizukuStatus.statusText,
+                            statusColor = shizukuStatus.statusColor,
+                            details = buildList {
+                                add("Installed" to if (shizukuStatus.isInstalled) "Yes" else "No")
+                                add("Running" to if (shizukuStatus.isRunning) "Yes" else "No")
+                                add("Permission" to if (shizukuStatus.hasPermission) "Granted" else "Not Granted")
+                                if (shizukuStatus.version > 0) {
+                                    add("Version" to "v${shizukuStatus.version}")
+                                }
+                            },
+                            actions = buildList {
+                                if (!shizukuStatus.isInstalled) {
+                                    add("Install Shizuku" to { viewModel.openShizukuApp() })
+                                } else if (!shizukuStatus.isRunning) {
+                                    add("Open Shizuku" to { viewModel.openShizukuApp() })
+                                } else if (!shizukuStatus.hasPermission) {
+                                    add("Grant Permission" to { viewModel.requestShizukuPermission() })
+                                }
+                            }
+                        )
+                    }
+                    
                     // Device Info Card
                     item {
                         SystemStatusCard(

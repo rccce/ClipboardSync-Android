@@ -357,7 +357,7 @@ class MainViewModel @Inject constructor(
                 }
                 
                 android.util.Log.d("MainViewModel", "Starting advanced monitoring manually...")
-                monitorManager.startMonitoring()
+                clipboardSyncManager.enableAdvancedMonitoring()
                 android.util.Log.d("MainViewModel", "Advanced monitoring started successfully")
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Failed to start advanced monitoring", e)
@@ -389,7 +389,7 @@ class MainViewModel @Inject constructor(
                 // Auto-start advanced monitoring if permissions are available
                 if (_uiState.value.hasRequiredPermissions && !_uiState.value.isAdvancedMonitoring) {
                     android.util.Log.d("MainViewModel", "Auto-starting advanced monitoring...")
-                    monitorManager.startMonitoring()
+                    clipboardSyncManager.enableAdvancedMonitoring()
                     android.util.Log.d("MainViewModel", "Advanced monitoring auto-started successfully")
                 } else if (!_uiState.value.hasRequiredPermissions) {
                     android.util.Log.d("MainViewModel", "Cannot auto-start advanced monitoring: missing permissions")

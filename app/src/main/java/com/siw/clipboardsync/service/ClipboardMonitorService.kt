@@ -46,6 +46,10 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     private var advancedMonitoringEnabled = false
     private var fallbackToPolling = false
     
+    // Initialization state
+    private var initializationJob: Job? = null
+    private var isInitialized = false
+    
     companion object {
         const val NOTIFICATION_ID = 1001
         const val CHANNEL_ID = "clipboard_sync_channel"
@@ -97,15 +101,18 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
         
         // Initialize clipboard sync manager
         Log.d(TAG, "Initializing ClipboardSyncManager for Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
-        serviceScope.launch {
+        initializationJob = serviceScope.launch {
             try {
                 clipboardSyncManager.initialize()
                 Log.d(TAG, "ClipboardSyncManager initialization completed")
                 
                 // Check if advanced monitoring is available and enable it
                 initializeAdvancedMonitoring()
+                isInitialized = true
+                Log.d(TAG, "Service initialization completed, advancedMonitoringEnabled=$advancedMonitoringEnabled")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize sync manager", e)
+                isInitialized = true // Mark as initialized even on failure so we can fallback to polling
             }
         }
     }
@@ -222,6 +229,11 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     
     private suspend fun adaptiveClipboardMonitoring() {
         Log.d(TAG, "Starting adaptive clipboard monitoring")
+        
+        // Wait for initialization to complete before deciding on monitoring strategy
+        Log.d(TAG, "Waiting for initialization to complete...")
+        initializationJob?.join()
+        Log.d(TAG, "Initialization completed, advancedMonitoringEnabled=$advancedMonitoringEnabled, fallbackToPolling=$fallbackToPolling")
         
         // If advanced monitoring is enabled, we don't need to poll
         if (advancedMonitoringEnabled && !fallbackToPolling) {

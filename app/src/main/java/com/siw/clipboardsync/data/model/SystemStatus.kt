@@ -149,7 +149,8 @@ data class PermissionStatus(
     val missingPermissions: List<String>,
     val hasAccessibilityPermission: Boolean,
     val hasNotificationPermission: Boolean,
-    val hasBootPermission: Boolean
+    val hasBootPermission: Boolean,
+    val shizukuStatus: ShizukuStatus = ShizukuStatus()
 ) {
     val statusText: String
         get() = when {
@@ -164,6 +165,35 @@ data class PermissionStatus(
             missingPermissions.size <= 2 -> SystemStatusColor.WARNING
             else -> SystemStatusColor.ERROR
         }
+}
+
+/**
+ * Shizuku permission and availability status
+ */
+data class ShizukuStatus(
+    val isInstalled: Boolean = false,
+    val isRunning: Boolean = false,
+    val hasPermission: Boolean = false,
+    val version: Int = -1
+) {
+    val statusText: String
+        get() = when {
+            !isInstalled -> "Shizuku Not Installed"
+            !isRunning -> "Shizuku Not Running"
+            !hasPermission -> "Permission Not Granted"
+            else -> "Shizuku Ready (v$version)"
+        }
+    
+    val statusColor: SystemStatusColor
+        get() = when {
+            hasPermission && isRunning -> SystemStatusColor.SUCCESS
+            isRunning && !hasPermission -> SystemStatusColor.WARNING
+            isInstalled && !isRunning -> SystemStatusColor.WARNING
+            else -> SystemStatusColor.NEUTRAL
+        }
+    
+    val canRequestPermission: Boolean
+        get() = isInstalled && isRunning && !hasPermission
 }
 
 /**

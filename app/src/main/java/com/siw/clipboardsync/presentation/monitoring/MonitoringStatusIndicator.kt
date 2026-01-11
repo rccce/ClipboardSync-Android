@@ -282,6 +282,7 @@ private fun getMethodDisplayName(method: MonitoringMethod): String {
         MonitoringMethod.SYSTEM_HOOKS -> "System Hooks"
         MonitoringMethod.XPOSED_HOOKS -> "Xposed"
         MonitoringMethod.READ_LOGS -> "Logcat"
+        MonitoringMethod.SHIZUKU -> "Shizuku"
         MonitoringMethod.ACCESSIBILITY_SERVICE -> "Accessibility"
         MonitoringMethod.FOREGROUND_SERVICE -> "Foreground"
         MonitoringMethod.POLLING_FALLBACK -> "Polling"

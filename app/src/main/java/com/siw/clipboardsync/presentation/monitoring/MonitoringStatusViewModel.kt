@@ -291,6 +291,7 @@ class MonitoringStatusViewModel @Inject constructor(
             MonitoringMethod.SYSTEM_HOOKS -> "需要 Root 权限，延迟最低"
             MonitoringMethod.XPOSED_HOOKS -> "需要 Xposed/LSPosed 框架"
             MonitoringMethod.READ_LOGS -> "需要 READ_LOGS 权限 (ADB)"
+            MonitoringMethod.SHIZUKU -> "需要安装 Shizuku 应用"
             MonitoringMethod.ACCESSIBILITY_SERVICE -> "需要无障碍服务权限"
             MonitoringMethod.FOREGROUND_SERVICE -> "显示持续通知"
             MonitoringMethod.POLLING_FALLBACK -> "定期检查，电池消耗较高"
