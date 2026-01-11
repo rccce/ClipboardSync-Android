@@ -1,6 +1,7 @@
 package com.siw.clipboardsync.data.local
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -21,17 +22,59 @@ import javax.inject.Singleton
 class TokenManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
+    companion object {
+        private const val TAG = "TokenManager"
+        private const val ACCESS_TOKEN_KEY = "access_token"
+        private const val REFRESH_TOKEN_KEY = "refresh_token"
+        private const val USER_ID_KEY = "user_id"
+        private const val USER_EMAIL_KEY = "user_email"
+        private const val DEVICE_ID_KEY = "device_id"
+        private const val ENCRYPTED_PREFS_NAME = "clipboard_sync_tokens"
+        private const val FALLBACK_PREFS_NAME = "clipboard_sync_tokens_fallback"
+    }
     
-    private val sharedPreferences = EncryptedSharedPreferences.create(
-        context,
-        "clipboard_sync_tokens",
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    private val sharedPreferences: SharedPreferences = createSharedPreferences()
+    
+    /**
+     * Create SharedPreferences with fallback to unencrypted storage if encryption fails.
+     * This can happen when Xposed/LSPosed framework interferes with Android Keystore.
+     */
+    private fun createSharedPreferences(): SharedPreferences {
+        return try {
+            // Try encrypted storage first
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            
+            EncryptedSharedPreferences.create(
+                context,
+                ENCRYPTED_PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            ).also {
+                Log.i(TAG, "Using encrypted SharedPreferences")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to create EncryptedSharedPreferences, falling back to regular storage", e)
+            
+            // Try to clear corrupted encrypted prefs
+            try {
+                context.getSharedPreferences(ENCRYPTED_PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().clear().apply()
+                // Also try to delete the file
+                context.deleteSharedPreferences(ENCRYPTED_PREFS_NAME)
+            } catch (clearError: Exception) {
+                Log.w(TAG, "Failed to clear corrupted encrypted prefs", clearError)
+            }
+            
+            // Fallback to regular SharedPreferences
+            // Note: This is less secure but allows the app to function with Xposed
+            context.getSharedPreferences(FALLBACK_PREFS_NAME, Context.MODE_PRIVATE).also {
+                Log.w(TAG, "Using fallback unencrypted SharedPreferences (Xposed compatibility mode)")
+            }
+        }
+    }
     
     private val _isLoggedIn = MutableStateFlow(hasValidTokens())
     val isLoggedIn: Flow<Boolean> = _isLoggedIn.asStateFlow()
@@ -48,14 +91,6 @@ class TokenManager @Inject constructor(
     
     // AuthRepository引用（将在后续注入）
     private var authRepository: (suspend () -> Result<*>)? = null
-    
-    companion object {
-        private const val ACCESS_TOKEN_KEY = "access_token"
-        private const val REFRESH_TOKEN_KEY = "refresh_token"
-        private const val USER_ID_KEY = "user_id"
-        private const val USER_EMAIL_KEY = "user_email"
-        private const val DEVICE_ID_KEY = "device_id"
-    }
     
     suspend fun saveTokens(accessToken: String, refreshToken: String) {
         sharedPreferences.edit()

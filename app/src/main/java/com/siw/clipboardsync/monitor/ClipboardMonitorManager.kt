@@ -20,8 +20,13 @@ import javax.inject.Singleton
 
 /**
  * Central coordinator for clipboard monitoring operations.
- * Manages strategy selection, fallback chain execution, and state preservation
- * across different monitoring methods.
+ * 
+ * Simplified monitoring model based on real-world testing:
+ * - XPOSED_HOOKS: Full background sync (highest priority)
+ * - SHIZUKU: Full background sync without root
+ * - FOREGROUND_SYNC: Sync when app comes to foreground (fallback)
+ * 
+ * Only ONE method is active at a time (mutually exclusive).
  */
 @Singleton
 class ClipboardMonitorManager @Inject constructor(
@@ -29,9 +34,6 @@ class ClipboardMonitorManager @Inject constructor(
     private val strategyFactory: MonitoringStrategyFactory,
     private val errorHandler: ClipboardErrorHandler,
     private val systemLevelMonitor: SystemLevelClipboardMonitor,
-    private val accessibilityMonitor: AccessibilityClipboardMonitor,
-    private val foregroundServiceMonitor: ForegroundServiceClipboardMonitor,
-    private val pollingMonitor: PollingClipboardMonitor,
     private val monitoringConfig: MonitoringConfig
 ) : ClipboardListener {
     
@@ -274,6 +276,18 @@ class ClipboardMonitorManager @Inject constructor(
         Log.d(TAG, "Starting monitoring with strategy: ${strategy.method.name}")
         
         try {
+            // Stop any existing monitor first to prevent duplicates
+            val existingMonitor = currentMonitor.get()
+            if (existingMonitor != null) {
+                Log.d(TAG, "Stopping existing monitor before starting new one")
+                try {
+                    existingMonitor.stopMonitoring()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error stopping existing monitor", e)
+                }
+                currentMonitor.set(null)
+            }
+            
             val monitor = createMonitorForStrategy(strategy)
             monitor.setClipboardListener(this) // Use manager as intermediate listener
             
@@ -355,16 +369,13 @@ class ClipboardMonitorManager @Inject constructor(
     
     /**
      * Creates a monitor instance for the given strategy.
+     * Only supports: XPOSED_HOOKS, SHIZUKU, FOREGROUND_SYNC
      */
     private fun createMonitorForStrategy(strategy: MonitoringStrategy): ClipboardMonitor {
         return when (strategy.method) {
-            MonitoringMethod.SYSTEM_HOOKS,
             MonitoringMethod.XPOSED_HOOKS -> systemLevelMonitor
-            MonitoringMethod.READ_LOGS -> systemLevelMonitor // Use system level monitor for logcat
             MonitoringMethod.SHIZUKU -> ShizukuClipboardMonitor(context)
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> accessibilityMonitor
-            MonitoringMethod.FOREGROUND_SERVICE -> foregroundServiceMonitor
-            MonitoringMethod.POLLING_FALLBACK -> pollingMonitor
+            MonitoringMethod.FOREGROUND_SYNC -> ForegroundSyncClipboardMonitor(context)
         }
     }
     

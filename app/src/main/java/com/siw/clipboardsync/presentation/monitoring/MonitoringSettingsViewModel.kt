@@ -97,25 +97,20 @@ class MonitoringSettingsViewModel @Inject constructor(
     private suspend fun determineAvailableMethods(): List<MonitoringMethod> {
         val availableMethods = mutableListOf<MonitoringMethod>()
         
-        // Check root-based methods
+        // Check Xposed-based method (requires root + Xposed framework actively hooking)
         if (rootDetectionService.isRooted()) {
             val capabilities = rootDetectionService.getRootCapabilities()
-            if (capabilities.hasSystemHooks) {
-                availableMethods.add(MonitoringMethod.SYSTEM_HOOKS)
-            }
             if (capabilities.hasXposedFramework) {
                 availableMethods.add(MonitoringMethod.XPOSED_HOOKS)
             }
         }
         
-        // Check accessibility service
-        availableMethods.add(MonitoringMethod.ACCESSIBILITY_SERVICE)
+        // Shizuku is available if installed, running, and permitted
+        // (availability check is done in MonitoringStrategyFactory)
+        availableMethods.add(MonitoringMethod.SHIZUKU)
         
-        // Foreground service is always available
-        availableMethods.add(MonitoringMethod.FOREGROUND_SERVICE)
-        
-        // Polling fallback is always available
-        availableMethods.add(MonitoringMethod.POLLING_FALLBACK)
+        // Foreground sync is always available as fallback
+        availableMethods.add(MonitoringMethod.FOREGROUND_SYNC)
         
         return availableMethods
     }
@@ -160,15 +155,11 @@ class MonitoringSettingsViewModel @Inject constructor(
         
         _uiState.value = _uiState.value.copy(enabledMethods = updatedEnabledMethods)
         
-        // Update configuration
+        // Update configuration based on simplified model
         monitoringConfig = when (method) {
-            MonitoringMethod.SYSTEM_HOOKS -> monitoringConfig.copy(enableSystemHooks = enabled)
             MonitoringMethod.XPOSED_HOOKS -> monitoringConfig.copy(enableXposedHooks = enabled)
-            MonitoringMethod.READ_LOGS -> monitoringConfig // READ_LOGS doesn't have a config toggle
-            MonitoringMethod.SHIZUKU -> monitoringConfig // Shizuku doesn't have a config toggle
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> monitoringConfig.copy(enableAccessibilityService = enabled)
-            MonitoringMethod.FOREGROUND_SERVICE -> monitoringConfig.copy(enableForegroundService = enabled)
-            MonitoringMethod.POLLING_FALLBACK -> monitoringConfig.copy(enablePollingFallback = enabled)
+            MonitoringMethod.SHIZUKU -> monitoringConfig.copy(enableShizuku = enabled)
+            MonitoringMethod.FOREGROUND_SYNC -> monitoringConfig.copy(enableForegroundSync = enabled)
         }
     }
     
@@ -220,9 +211,10 @@ class MonitoringSettingsViewModel @Inject constructor(
     private fun determineBatteryImpact(method: MonitoringMethod?, cpuUsage: Double): String {
         return when {
             method == null -> "Unknown"
-            method == MonitoringMethod.POLLING_FALLBACK && cpuUsage > 2.0 -> "High"
-            method == MonitoringMethod.POLLING_FALLBACK -> "Medium"
-            method == MonitoringMethod.FOREGROUND_SERVICE -> "Medium"
+            method == MonitoringMethod.FOREGROUND_SYNC && cpuUsage > 2.0 -> "Medium"
+            method == MonitoringMethod.FOREGROUND_SYNC -> "Low"
+            method == MonitoringMethod.XPOSED_HOOKS -> "Low"
+            method == MonitoringMethod.SHIZUKU -> "Low"
             cpuUsage > 1.0 -> "Medium"
             else -> "Low"
         }

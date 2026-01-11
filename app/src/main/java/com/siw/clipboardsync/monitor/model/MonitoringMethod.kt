@@ -3,26 +3,25 @@ package com.siw.clipboardsync.monitor.model
 /**
  * Enumeration of available clipboard monitoring methods.
  * Listed in priority order (highest priority first).
+ * 
+ * Based on real-world testing:
+ * - XPOSED_HOOKS: Full background sync capability
+ * - SHIZUKU: Full background sync capability  
+ * - FOREGROUND_SYNC: Sync only when app comes to foreground (for non-root/non-shizuku devices)
+ * 
+ * Note: The following methods were removed due to testing showing they don't work for background sync:
+ * - SYSTEM_HOOKS: Requires switching to app to sync
+ * - READ_LOGS: Cannot achieve background clipboard sync
+ * - ACCESSIBILITY_SERVICE: Cannot achieve background clipboard sync (kept only for keep-alive)
+ * - POLLING_FALLBACK: Removed, replaced by FOREGROUND_SYNC
  */
 enum class MonitoringMethod {
-    /** Root-based native system hooks - highest priority, lowest latency */
-    SYSTEM_HOOKS,
-    
-    /** Xposed/LSPosed framework hooks - high priority, real-time events */
+    /** Xposed/LSPosed framework hooks - highest priority, full background sync */
     XPOSED_HOOKS,
     
-    /** READ_LOGS permission-based logcat monitoring - medium-high priority */
-    READ_LOGS,
-    
-    /** Shizuku-based monitoring - medium-high priority, works without root */
+    /** Shizuku-based monitoring - high priority, full background sync without root */
     SHIZUKU,
     
-    /** Accessibility service-based monitoring - medium priority */
-    ACCESSIBILITY_SERVICE,
-    
-    /** Foreground service with polling - medium-low priority */
-    FOREGROUND_SERVICE,
-    
-    /** Adaptive polling fallback - lowest priority */
-    POLLING_FALLBACK
+    /** Foreground sync - sync clipboard when app comes to foreground (fallback for non-root devices) */
+    FOREGROUND_SYNC
 }

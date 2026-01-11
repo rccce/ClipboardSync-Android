@@ -22,11 +22,9 @@ class LatencyTracker @Inject constructor() {
         private const val MAX_SAMPLES = 100
         
         // Target latencies by method (in milliseconds)
-        const val TARGET_LATENCY_ROOT = 100L      // Root methods should detect within 100ms
-        const val TARGET_LATENCY_XPOSED = 100L    // Xposed should detect within 100ms
-        const val TARGET_LATENCY_READ_LOGS = 500L // READ_LOGS within 500ms
-        const val TARGET_LATENCY_ACCESSIBILITY = 500L // Accessibility within 500ms
-        const val TARGET_LATENCY_POLLING = 1000L  // Polling within 1 second
+        // Simplified model: only 3 methods
+        const val TARGET_LATENCY_XPOSED = 100L    // Xposed/Shizuku should detect within 100ms (background sync)
+        const val TARGET_LATENCY_POLLING = 1000L  // Foreground sync within 1 second
     }
     
     // Latency samples per monitoring method
@@ -146,16 +144,17 @@ class LatencyTracker @Inject constructor() {
     
     /**
      * Gets the target latency for a monitoring method.
+     * 
+     * Simplified monitoring model:
+     * - XPOSED_HOOKS: Full background sync (100ms target)
+     * - SHIZUKU: Full background sync (100ms target)
+     * - FOREGROUND_SYNC: Sync on app focus (1000ms target)
      */
     fun getTargetLatency(method: MonitoringMethod): Long {
         return when (method) {
-            MonitoringMethod.SYSTEM_HOOKS -> TARGET_LATENCY_ROOT
             MonitoringMethod.XPOSED_HOOKS -> TARGET_LATENCY_XPOSED
-            MonitoringMethod.READ_LOGS -> TARGET_LATENCY_READ_LOGS
-            MonitoringMethod.SHIZUKU -> TARGET_LATENCY_ACCESSIBILITY // Similar to accessibility
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> TARGET_LATENCY_ACCESSIBILITY
-            MonitoringMethod.FOREGROUND_SERVICE -> TARGET_LATENCY_POLLING
-            MonitoringMethod.POLLING_FALLBACK -> TARGET_LATENCY_POLLING
+            MonitoringMethod.SHIZUKU -> TARGET_LATENCY_XPOSED // Same as Xposed for background sync
+            MonitoringMethod.FOREGROUND_SYNC -> TARGET_LATENCY_POLLING
         }
     }
     

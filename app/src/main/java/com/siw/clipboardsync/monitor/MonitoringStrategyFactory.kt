@@ -1,23 +1,29 @@
 package com.siw.clipboardsync.monitor
 
-import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.monitor.model.MonitoringStrategy
 import com.siw.clipboardsync.service.RootDetectionService
-import com.siw.clipboardsync.utils.AccessibilityPermissionManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * Factory for creating and evaluating clipboard monitoring strategies.
- * Selects the optimal monitoring method based on device capabilities,
- * permissions, and system constraints.
+ * 
+ * Based on real-world testing, only the following methods provide true background sync:
+ * 1. XPOSED_HOOKS - Full background sync (highest priority)
+ * 2. SHIZUKU - Full background sync without root
+ * 3. FOREGROUND_SYNC - Sync when app comes to foreground (fallback)
+ * 
+ * Removed methods (don't work for background sync):
+ * - SYSTEM_HOOKS: Requires switching to app
+ * - READ_LOGS: Cannot achieve background sync
+ * - ACCESSIBILITY_SERVICE: Cannot achieve background sync
+ * - POLLING_FALLBACK: Replaced by FOREGROUND_SYNC
  */
 @Singleton
 class MonitoringStrategyFactory @Inject constructor(
@@ -28,14 +34,11 @@ class MonitoringStrategyFactory @Inject constructor(
     companion object {
         private const val TAG = "MonitoringStrategyFactory"
         
-        // Priority values for different monitoring methods (higher = better)
-        private const val SYSTEM_HOOKS_PRIORITY = 100
-        private const val SHIZUKU_PRIORITY = 95  // High priority - provides background clipboard access without root on Android 10+
-        private const val XPOSED_HOOKS_PRIORITY = 90
-        private const val READ_LOGS_PRIORITY = 85
-        private const val ACCESSIBILITY_SERVICE_PRIORITY = 70
-        private const val FOREGROUND_SERVICE_PRIORITY = 50
-        private const val POLLING_FALLBACK_PRIORITY = 10
+        // Priority values for monitoring methods (higher = better)
+        // Only methods that actually work for background sync
+        private const val XPOSED_HOOKS_PRIORITY = 100  // Highest - full background sync
+        private const val SHIZUKU_PRIORITY = 90        // High - full background sync without root
+        private const val FOREGROUND_SYNC_PRIORITY = 10 // Fallback - sync on app focus
         
         // SharedPreferences keys for state persistence
         private const val PREFS_NAME = "monitoring_strategy_prefs"
@@ -43,71 +46,24 @@ class MonitoringStrategyFactory @Inject constructor(
         private const val KEY_LAST_STRATEGY_TIME = "last_strategy_timestamp"
     }
     
-    private val accessibilityPermissionManager = AccessibilityPermissionManager(context)
-    
     /**
      * Creates all available monitoring strategies based on current device capabilities.
+     * 
+     * Strategy selection is mutually exclusive - only ONE method will be active:
+     * 1. XPOSED_HOOKS if Xposed is actively hooking this app
+     * 2. SHIZUKU if Shizuku is running and permitted
+     * 3. FOREGROUND_SYNC as fallback (sync when app comes to foreground)
+     * 
      * @return list of monitoring strategies sorted by priority (highest first)
      */
     suspend fun createAvailableStrategies(): List<MonitoringStrategy> {
-        Log.d(TAG, "Evaluating available monitoring strategies")
+        Log.d(TAG, "Evaluating available monitoring strategies (simplified model)")
         
         val strategies = mutableListOf<MonitoringStrategy>()
         val rootCapabilities = rootDetectionService.getRootCapabilities()
         
-        // System-level hooks (highest priority for rooted devices)
-        // NOTE: On Android 10+, even with root, system hooks may not work in background
-        // due to clipboard access restrictions. We need to verify native hooks are actually available.
-        Log.d(TAG, "Root capabilities check: hasSystemHooks=${rootCapabilities.hasSystemHooks}, hasRootAccess=${rootCapabilities.hasRootAccess}, rootMethod=${rootCapabilities.rootMethod}")
-        
-        // On Android 10+, system hooks are less reliable due to background restrictions
-        // Only mark as available if we have actual native hook support (not just root)
-        val systemHooksActuallyAvailable = rootCapabilities.hasSystemHooks && 
-            rootCapabilities.hasNativeAccess && 
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q // System hooks work better on Android 9 and below
-        
-        if (systemHooksActuallyAvailable) {
-            strategies.add(
-                MonitoringStrategy(
-                    method = MonitoringMethod.SYSTEM_HOOKS,
-                    priority = SYSTEM_HOOKS_PRIORITY,
-                    isAvailable = true,
-                    capabilities = setOf(
-                        MonitoringStrategy.Capability.BACKGROUND_ACCESS,
-                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
-                        MonitoringStrategy.Capability.LOW_LATENCY,
-                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES,
-                        MonitoringStrategy.Capability.SYSTEM_LEVEL_ACCESS
-                    )
-                )
-            )
-            Log.d(TAG, "System hooks strategy available (Android < 10 with native access)")
-        } else if (rootCapabilities.hasSystemHooks) {
-            // On Android 10+, system hooks have limited background access
-            // Add with lower priority so accessibility service is preferred
-            strategies.add(
-                MonitoringStrategy(
-                    method = MonitoringMethod.SYSTEM_HOOKS,
-                    priority = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        FOREGROUND_SERVICE_PRIORITY - 5 // Lower than accessibility on Android 10+
-                    } else {
-                        SYSTEM_HOOKS_PRIORITY
-                    },
-                    isAvailable = rootCapabilities.hasNativeAccess,
-                    capabilities = setOf(
-                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
-                        MonitoringStrategy.Capability.LOW_LATENCY,
-                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES,
-                        MonitoringStrategy.Capability.SYSTEM_LEVEL_ACCESS
-                    )
-                )
-            )
-            Log.d(TAG, "System hooks strategy available with reduced priority (Android 10+ background restrictions)")
-        } else {
-            Log.d(TAG, "System hooks strategy NOT available - hasSystemHooks=false")
-        }
-        
-        // Xposed/LSPosed hooks
+        // 1. Xposed/LSPosed hooks - ONLY if actively hooking this app
+        // This provides true background clipboard sync
         if (rootCapabilities.hasXposedFramework) {
             strategies.add(
                 MonitoringStrategy(
@@ -123,11 +79,13 @@ class MonitoringStrategyFactory @Inject constructor(
                     )
                 )
             )
-            Log.d(TAG, "Xposed hooks strategy available")
+            Log.i(TAG, "Xposed hooks strategy available - FULL BACKGROUND SYNC")
+        } else {
+            Log.d(TAG, "Xposed hooks NOT available (not actively hooking this app)")
         }
         
-        // Shizuku - provides ADB-level permissions without root
-        // Excellent for Android 10+ background clipboard access
+        // 2. Shizuku - provides ADB-level permissions without root
+        // This provides true background clipboard sync
         val shizukuAvailable = isShizukuAvailableAndPermitted()
         if (shizukuAvailable) {
             strategies.add(
@@ -142,12 +100,11 @@ class MonitoringStrategyFactory @Inject constructor(
                     )
                 )
             )
-            Log.d(TAG, "Shizuku strategy available (running and permitted)")
+            Log.i(TAG, "Shizuku strategy available - FULL BACKGROUND SYNC")
         } else {
-            // Check if Shizuku is installed but not running or not permitted
             val shizukuInstalled = isShizukuInstalled()
             val shizukuRunning = isShizukuRunning()
-            Log.d(TAG, "Shizuku strategy NOT available - installed=$shizukuInstalled, running=$shizukuRunning, permitted=${shizukuRunning && isShizukuPermitted()}")
+            Log.d(TAG, "Shizuku NOT available - installed=$shizukuInstalled, running=$shizukuRunning")
             
             // Add as unavailable option so users know it exists
             strategies.add(
@@ -164,99 +121,30 @@ class MonitoringStrategyFactory @Inject constructor(
             )
         }
         
-        // READ_LOGS permission-based monitoring
-        val readLogsAvailable = isReadLogsPermissionGranted()
-        if (readLogsAvailable) {
-            strategies.add(
-                MonitoringStrategy(
-                    method = MonitoringMethod.READ_LOGS,
-                    priority = READ_LOGS_PRIORITY,
-                    isAvailable = true,
-                    capabilities = setOf(
-                        MonitoringStrategy.Capability.BACKGROUND_ACCESS,
-                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
-                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES
-                    )
-                )
-            )
-            Log.d(TAG, "READ_LOGS strategy available")
-        } else {
-            // Add as unavailable option so users know it exists
-            strategies.add(
-                MonitoringStrategy(
-                    method = MonitoringMethod.READ_LOGS,
-                    priority = READ_LOGS_PRIORITY,
-                    isAvailable = false,
-                    capabilities = setOf(
-                        MonitoringStrategy.Capability.BACKGROUND_ACCESS,
-                        MonitoringStrategy.Capability.REAL_TIME_EVENTS,
-                        MonitoringStrategy.Capability.ALL_CONTENT_TYPES
-                    )
-                )
-            )
-            Log.d(TAG, "READ_LOGS strategy NOT available - permission not granted")
-        }
-        
-        // Accessibility service (good for Android 10+ non-root devices)
-        // On Android 10+, this is the MOST RELIABLE method for background clipboard monitoring
-        val accessibilityAvailable = accessibilityPermissionManager.isAccessibilityServiceEnabled()
-        val accessibilityPriority = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // On Android 10+, accessibility service is the best option for background monitoring
-            // Give it higher priority than system hooks which don't work well in background
-            SYSTEM_HOOKS_PRIORITY + 5 // Higher than system hooks on Android 10+
-        } else {
-            ACCESSIBILITY_SERVICE_PRIORITY
-        }
+        // 3. Foreground sync - always available as fallback
+        // Syncs clipboard when app comes to foreground
         strategies.add(
             MonitoringStrategy(
-                method = MonitoringMethod.ACCESSIBILITY_SERVICE,
-                priority = accessibilityPriority,
-                isAvailable = accessibilityAvailable,
-                capabilities = setOf(
-                    MonitoringStrategy.Capability.BACKGROUND_ACCESS,
-                    MonitoringStrategy.Capability.REAL_TIME_EVENTS,
-                    MonitoringStrategy.Capability.ALL_CONTENT_TYPES
-                )
-            )
-        )
-        Log.d(TAG, "Accessibility service strategy available: $accessibilityAvailable, priority: $accessibilityPriority (Android ${Build.VERSION.SDK_INT})")
-        
-        // Foreground service (reliable but requires persistent notification)
-        strategies.add(
-            MonitoringStrategy(
-                method = MonitoringMethod.FOREGROUND_SERVICE,
-                priority = FOREGROUND_SERVICE_PRIORITY,
-                isAvailable = true, // Always available
-                capabilities = setOf(
-                    MonitoringStrategy.Capability.BACKGROUND_ACCESS,
-                    MonitoringStrategy.Capability.ALL_CONTENT_TYPES
-                )
-            )
-        )
-        Log.d(TAG, "Foreground service strategy available")
-        
-        // Polling fallback (always available as last resort)
-        strategies.add(
-            MonitoringStrategy(
-                method = MonitoringMethod.POLLING_FALLBACK,
-                priority = POLLING_FALLBACK_PRIORITY,
+                method = MonitoringMethod.FOREGROUND_SYNC,
+                priority = FOREGROUND_SYNC_PRIORITY,
                 isAvailable = true,
                 capabilities = setOf(
                     MonitoringStrategy.Capability.ALL_CONTENT_TYPES
+                    // Note: No BACKGROUND_ACCESS - this is intentional
                 )
             )
         )
-        Log.d(TAG, "Polling fallback strategy available")
+        Log.d(TAG, "Foreground sync strategy available (fallback - sync on app focus)")
         
-        // Sort by priority (highest first) and filter available strategies
-        val sortedStrategies = strategies
-            .sortedByDescending { it.priority }
-            .also { sorted ->
-                Log.d(TAG, "Available strategies in priority order:")
-                sorted.forEach { strategy ->
-                    Log.d(TAG, "  ${strategy.method.name}: priority=${strategy.priority}, available=${strategy.isAvailable}")
-                }
-            }
+        // Sort by priority (highest first)
+        val sortedStrategies = strategies.sortedByDescending { it.priority }
+        
+        Log.d(TAG, "=== Available strategies in priority order ===")
+        sortedStrategies.forEach { strategy ->
+            val bgSync = if (strategy.hasCapability(MonitoringStrategy.Capability.BACKGROUND_ACCESS)) 
+                "BACKGROUND SYNC" else "FOREGROUND ONLY"
+            Log.d(TAG, "  ${strategy.method.name}: priority=${strategy.priority}, available=${strategy.isAvailable}, $bgSync")
+        }
         
         return sortedStrategies
     }
@@ -431,29 +319,14 @@ class MonitoringStrategyFactory @Inject constructor(
      */
     suspend fun isMethodAvailable(method: MonitoringMethod): Boolean {
         return when (method) {
-            MonitoringMethod.SYSTEM_HOOKS -> {
-                val capabilities = rootDetectionService.getRootCapabilities()
-                capabilities.hasSystemHooks
-            }
             MonitoringMethod.XPOSED_HOOKS -> {
                 val capabilities = rootDetectionService.getRootCapabilities()
                 capabilities.hasXposedFramework
             }
-            MonitoringMethod.READ_LOGS -> {
-                isReadLogsPermissionGranted()
-            }
             MonitoringMethod.SHIZUKU -> {
-                try {
-                    rikka.shizuku.Shizuku.pingBinder()
-                } catch (e: Exception) {
-                    false
-                }
+                isShizukuAvailableAndPermitted()
             }
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> {
-                accessibilityPermissionManager.isAccessibilityServiceEnabled()
-            }
-            MonitoringMethod.FOREGROUND_SERVICE -> true // Always available
-            MonitoringMethod.POLLING_FALLBACK -> true // Always available
+            MonitoringMethod.FOREGROUND_SYNC -> true // Always available as fallback
         }
     }
     
@@ -511,21 +384,6 @@ class MonitoringStrategyFactory @Inject constructor(
     }
     
     /**
-     * Checks if READ_LOGS permission is granted.
-     */
-    private fun isReadLogsPermissionGranted(): Boolean {
-        return try {
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_LOGS
-            ) == PackageManager.PERMISSION_GRANTED
-        } catch (e: Exception) {
-            Log.w(TAG, "Error checking READ_LOGS permission", e)
-            false
-        }
-    }
-    
-    /**
      * Gets detailed information about device capabilities for monitoring.
      * @return map of capability information
      */
@@ -536,13 +394,10 @@ class MonitoringStrategyFactory @Inject constructor(
             "android_version" to Build.VERSION.SDK_INT,
             "android_release" to Build.VERSION.RELEASE,
             "is_rooted" to rootDetectionService.isRooted(),
-            "has_system_hooks" to rootCapabilities.hasSystemHooks,
             "has_xposed_framework" to rootCapabilities.hasXposedFramework,
-            "has_native_access" to rootCapabilities.hasNativeAccess,
-            "root_method" to rootCapabilities.rootMethod.name,
-            "has_read_logs_permission" to isReadLogsPermissionGranted(),
-            "accessibility_service_enabled" to accessibilityPermissionManager.isAccessibilityServiceEnabled(),
-            "accessibility_service_running" to accessibilityPermissionManager.isServiceActiveAndMonitoring(),
+            "shizuku_available" to isShizukuAvailableAndPermitted(),
+            "shizuku_installed" to isShizukuInstalled(),
+            "shizuku_running" to isShizukuRunning(),
             "device_manufacturer" to Build.MANUFACTURER,
             "device_model" to Build.MODEL
         )

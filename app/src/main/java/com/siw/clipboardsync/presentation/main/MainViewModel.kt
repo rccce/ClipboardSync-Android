@@ -27,10 +27,13 @@ class MainViewModel @Inject constructor(
     private val clipboardSyncManager: ClipboardSyncManager,
     private val monitorManager: ClipboardMonitorManager,
     @ApplicationContext private val context: Context
-) : ViewModel() {
+) : ViewModel(), androidx.lifecycle.DefaultLifecycleObserver {
     
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+    
+    // Track last synced content hash to prevent duplicate syncs
+    private var lastSyncedContentHash: String? = null
     
     init {
         loadInitialData()
@@ -42,6 +45,20 @@ class MainViewModel @Inject constructor(
         autoStartClipboardSync()
         // Auto-start WebSocket connection when app starts
         autoStartWebSocketConnection()
+        // Register for lifecycle events
+        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+    }
+    
+    override fun onCleared() {
+        super.onCleared()
+        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.removeObserver(this)
+    }
+    
+    // Called when app comes to foreground
+    override fun onStart(owner: androidx.lifecycle.LifecycleOwner) {
+        super<androidx.lifecycle.DefaultLifecycleObserver>.onStart(owner)
+        android.util.Log.d("MainViewModel", "App came to foreground, refreshing clipboard")
+        refreshCurrentClipboard()
     }
     
     private fun loadInitialData() {
@@ -63,6 +80,13 @@ class MainViewModel @Inject constructor(
                     currentClipboard = currentClipboard,
                     isLoading = false
                 )
+                
+                // Initialize lastSyncedContentHash with current clipboard to avoid
+                // syncing the same content on first app open
+                if (!currentClipboard.isNullOrBlank()) {
+                    lastSyncedContentHash = com.siw.clipboardsync.utils.DeviceUtils.generateContentHash(currentClipboard)
+                    android.util.Log.d("MainViewModel", "Initialized lastSyncedContentHash with current clipboard")
+                }
                 
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -104,6 +128,58 @@ class MainViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(isServiceRunning = false)
     }
     
+    /**
+     * Perform manual clipboard sync.
+     * Called when user clicks "立即同步" button in notification.
+     * This reads the current clipboard and syncs it to the server.
+     * Manual sync always syncs regardless of whether content has changed.
+     */
+    fun performManualSync() {
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("MainViewModel", "Performing manual sync...")
+                
+                // Wait a moment to ensure the app has fully gained focus
+                // Android 10+ requires the app to be in focus to read clipboard
+                kotlinx.coroutines.delay(300)
+                
+                // Get current clipboard content
+                val currentClipboard = ClipboardUtils.getCurrentClipboardText(context)
+                if (currentClipboard.isNullOrBlank()) {
+                    android.util.Log.d("MainViewModel", "No clipboard content to sync")
+                    return@launch
+                }
+                
+                // Check if content should be synced
+                if (!ClipboardUtils.shouldSyncContent(currentClipboard)) {
+                    android.util.Log.d("MainViewModel", "Content filtered out from sync")
+                    return@launch
+                }
+                
+                // Sync the clipboard content (manual sync always syncs)
+                val result = clipboardSyncManager.syncLocalClipboard(currentClipboard, "text")
+                if (result.isSuccess) {
+                    android.util.Log.d("MainViewModel", "Manual sync completed successfully")
+                    // Update last synced hash
+                    lastSyncedContentHash = com.siw.clipboardsync.utils.DeviceUtils.generateContentHash(currentClipboard)
+                    _uiState.value = _uiState.value.copy(currentClipboard = currentClipboard)
+                    // Refresh history to show the new item
+                    refreshClipboardHistory()
+                } else {
+                    android.util.Log.w("MainViewModel", "Manual sync failed: ${result.exceptionOrNull()?.message}")
+                    _uiState.value = _uiState.value.copy(
+                        errorMessage = "同步失败: ${result.exceptionOrNull()?.message}"
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Error during manual sync", e)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = "同步失败: ${e.message}"
+                )
+            }
+        }
+    }
+    
     fun refreshClipboardHistory() {
         viewModelScope.launch {
             try {
@@ -117,6 +193,24 @@ class MainViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     errorMessage = e.message
                 )
+            }
+        }
+    }
+    
+    /**
+     * Refresh current clipboard content displayed in UI.
+     * Called when app comes to foreground.
+     */
+    private fun refreshCurrentClipboard() {
+        viewModelScope.launch {
+            try {
+                // Small delay to ensure clipboard access is available
+                kotlinx.coroutines.delay(100)
+                val currentClipboard = ClipboardUtils.getCurrentClipboardText(context)
+                _uiState.value = _uiState.value.copy(currentClipboard = currentClipboard)
+                android.util.Log.d("MainViewModel", "Current clipboard refreshed: ${currentClipboard?.take(30)}...")
+            } catch (e: Exception) {
+                android.util.Log.w("MainViewModel", "Failed to refresh clipboard: ${e.message}")
             }
         }
     }
@@ -216,15 +310,19 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             clipboardSyncManager.lastSyncedItem.collect { item ->
                 item?.let {
-                    _uiState.value = _uiState.value.copy(
-                        lastIncomingUpdate = it,
-                        incomingUpdateTimestamp = System.currentTimeMillis()
-                    )
-                    
-                    // Auto-update clipboard if enabled
+                    // Auto-update clipboard if enabled - no need to show notification
                     if (_uiState.value.autoUpdateClipboard) {
                         ClipboardUtils.setTextToClipboard(context, it.content)
-                        _uiState.value = _uiState.value.copy(currentClipboard = it.content)
+                        _uiState.value = _uiState.value.copy(
+                            currentClipboard = it.content,
+                            lastIncomingUpdate = null // Don't show notification when auto-apply is enabled
+                        )
+                    } else {
+                        // Only show notification when auto-apply is disabled
+                        _uiState.value = _uiState.value.copy(
+                            lastIncomingUpdate = it,
+                            incomingUpdateTimestamp = System.currentTimeMillis()
+                        )
                     }
                     
                     // Refresh history to include new item
@@ -329,14 +427,27 @@ class MainViewModel @Inject constructor(
         // Observe monitoring status
         viewModelScope.launch {
             monitorManager.isMonitoring.collect { isMonitoring ->
+                android.util.Log.d("MainViewModel", "Monitoring status changed: $isMonitoring")
                 _uiState.value = _uiState.value.copy(isAdvancedMonitoring = isMonitoring)
             }
         }
         
-        // Observe current monitoring method
+        // Observe current monitoring method from ClipboardMonitorManager
         viewModelScope.launch {
             monitorManager.currentMethod.collect { method ->
+                android.util.Log.d("MainViewModel", "Monitoring method changed (from monitorManager): ${method?.name}")
                 _uiState.value = _uiState.value.copy(currentMonitoringMethod = method)
+            }
+        }
+        
+        // Also observe from ClipboardSyncManager to ensure we catch all updates
+        viewModelScope.launch {
+            clipboardSyncManager.monitoringMethod.collect { method ->
+                android.util.Log.d("MainViewModel", "Monitoring method changed (from syncManager): ${method?.name}")
+                // Only update if different from current state
+                if (method != _uiState.value.currentMonitoringMethod) {
+                    _uiState.value = _uiState.value.copy(currentMonitoringMethod = method)
+                }
             }
         }
     }

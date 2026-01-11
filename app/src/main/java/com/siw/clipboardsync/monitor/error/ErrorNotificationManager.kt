@@ -268,13 +268,9 @@ class ErrorNotificationManager @Inject constructor(
     
     fun showRecoverySuccessNotification(method: MonitoringMethod) {
         val methodName = when (method) {
-            MonitoringMethod.SYSTEM_HOOKS -> "System Hooks"
             MonitoringMethod.XPOSED_HOOKS -> "Xposed Framework"
-            MonitoringMethod.READ_LOGS -> "READ_LOGS Permission"
             MonitoringMethod.SHIZUKU -> "Shizuku"
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> "Accessibility Service"
-            MonitoringMethod.FOREGROUND_SERVICE -> "Foreground Service"
-            MonitoringMethod.POLLING_FALLBACK -> "Polling Fallback"
+            MonitoringMethod.FOREGROUND_SYNC -> "Foreground Sync"
         }
         
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_RECOVERY)
@@ -308,13 +304,9 @@ class ErrorNotificationManager @Inject constructor(
         )
         
         val methodName = when (lastMethod) {
-            MonitoringMethod.SYSTEM_HOOKS -> "System Hooks"
             MonitoringMethod.XPOSED_HOOKS -> "Xposed Framework"
-            MonitoringMethod.READ_LOGS -> "READ_LOGS Permission"
             MonitoringMethod.SHIZUKU -> "Shizuku"
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> "Accessibility Service"
-            MonitoringMethod.FOREGROUND_SERVICE -> "Foreground Service"
-            MonitoringMethod.POLLING_FALLBACK -> "Polling Fallback"
+            MonitoringMethod.FOREGROUND_SYNC -> "Foreground Sync"
         }
         
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_ERROR)

@@ -20,9 +20,7 @@ data class RootCapabilities(
     val aPatchVersion: String? = null,
     // Detailed capability flags
     val canExecuteRootCommands: Boolean = false,
-    val canAccessClipboardService: Boolean = false,
-    val canReadSystemLogs: Boolean = false,
-    val hasReadLogsPermission: Boolean = false
+    val canAccessClipboardService: Boolean = false
 ) {
     enum class RootMethod {
         NONE,
@@ -91,8 +89,6 @@ data class RootCapabilities(
         "hasAPatch" to hasAPatch,
         "aPatchVersion" to aPatchVersion,
         "canExecuteRootCommands" to canExecuteRootCommands,
-        "canAccessClipboardService" to canAccessClipboardService,
-        "canReadSystemLogs" to canReadSystemLogs,
-        "hasReadLogsPermission" to hasReadLogsPermission
+        "canAccessClipboardService" to canAccessClipboardService
     )
 }

@@ -48,6 +48,11 @@ data class RootStatus(
 
 /**
  * Clipboard monitoring status
+ * 
+ * Simplified monitoring model (mutually exclusive):
+ * - XPOSED_HOOKS: Full background sync (highest priority)
+ * - SHIZUKU: Full background sync without root
+ * - FOREGROUND_SYNC: Sync when app comes to foreground (fallback)
  */
 data class MonitoringStatus(
     val isMonitoring: Boolean,
@@ -58,22 +63,18 @@ data class MonitoringStatus(
     val statusText: String
         get() = when {
             !isMonitoring -> "Not Monitoring"
-            // currentMethod == MonitoringMethod.IME_SERVICE -> "IME Service Active"
-            currentMethod == MonitoringMethod.SYSTEM_HOOKS -> "System Hooks Active"
-            currentMethod == MonitoringMethod.ACCESSIBILITY_SERVICE -> "Accessibility Service Active"
-            currentMethod == MonitoringMethod.FOREGROUND_SERVICE -> "Foreground Service Active"
-            currentMethod == MonitoringMethod.POLLING_FALLBACK -> "Polling Fallback Active"
+            currentMethod == MonitoringMethod.XPOSED_HOOKS -> "Xposed Hooks Active (Background Sync)"
+            currentMethod == MonitoringMethod.SHIZUKU -> "Shizuku Active (Background Sync)"
+            currentMethod == MonitoringMethod.FOREGROUND_SYNC -> "Foreground Sync Active"
             else -> "Unknown Method"
         }
     
     val statusColor: SystemStatusColor
         get() = when {
             !isMonitoring -> SystemStatusColor.ERROR
-            // currentMethod == MonitoringMethod.IME_SERVICE -> SystemStatusColor.SUCCESS
-            currentMethod == MonitoringMethod.SYSTEM_HOOKS -> SystemStatusColor.SUCCESS
-            currentMethod == MonitoringMethod.ACCESSIBILITY_SERVICE -> SystemStatusColor.WARNING
-            currentMethod == MonitoringMethod.FOREGROUND_SERVICE -> SystemStatusColor.WARNING
-            currentMethod == MonitoringMethod.POLLING_FALLBACK -> SystemStatusColor.ERROR
+            currentMethod == MonitoringMethod.XPOSED_HOOKS -> SystemStatusColor.SUCCESS
+            currentMethod == MonitoringMethod.SHIZUKU -> SystemStatusColor.SUCCESS
+            currentMethod == MonitoringMethod.FOREGROUND_SYNC -> SystemStatusColor.WARNING
             else -> SystemStatusColor.NEUTRAL
         }
 }

@@ -31,8 +31,8 @@ class ShizukuClipboardMonitor(
     
     companion object {
         private const val TAG = "ShizukuClipboardMonitor"
-        private const val CLIPBOARD_CHECK_INTERVAL_MS = 1000L
-        private const val CLIPBOARD_CHANGE_DEBOUNCE_MS = 300L
+        private const val CLIPBOARD_CHECK_INTERVAL_MS = 1500L  // Increased from 1000ms to reduce duplicate checks
+        private const val CLIPBOARD_CHANGE_DEBOUNCE_MS = 500L  // Increased from 300ms for better deduplication
         
         // Shizuku permission request code
         const val SHIZUKU_PERMISSION_REQUEST_CODE = 1001
@@ -41,7 +41,7 @@ class ShizukuClipboardMonitor(
     private val monitorScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val isMonitoring = AtomicBoolean(false)
     private var clipboardListener: ClipboardListener? = null
-    private var lastClipboardContent: String? = null
+    private var lastClipboardContentHash: String? = null  // Use hash instead of full content
     private var lastChangeTime = 0L
     private var monitoringJob: Job? = null
     
@@ -79,6 +79,9 @@ class ShizukuClipboardMonitor(
         if (isMonitoring.get()) {
             monitorScope.launch {
                 try {
+                    // Cancel existing job before starting new one to prevent duplicates
+                    monitoringJob?.cancel()
+                    monitoringJob = null
                     startMonitoringInternal()
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to start monitoring after binder received", e)
@@ -144,6 +147,10 @@ class ShizukuClipboardMonitor(
     
     private suspend fun startMonitoringInternal() {
         Log.i(TAG, "Starting Shizuku clipboard monitoring internal")
+        
+        // Cancel any existing monitoring job to prevent duplicates
+        monitoringJob?.cancel()
+        monitoringJob = null
         
         // Initialize reflection
         initializeReflection()
@@ -310,35 +317,40 @@ class ShizukuClipboardMonitor(
             // Get clipboard content using Shizuku
             val clipboardText = getClipboardTextViaShizuku()
             
-            if (clipboardText != null && clipboardText != lastClipboardContent && clipboardText.isNotEmpty()) {
-                lastClipboardContent = clipboardText
-                lastChangeTime = currentTime
+            if (clipboardText != null && clipboardText.isNotEmpty()) {
+                // Use hash for comparison to be more efficient and consistent
+                val contentHash = clipboardText.hashCode().toString()
                 
-                Log.i(TAG, "Clipboard changed via Shizuku: ${clipboardText.take(50)}...")
-                
-                val content = ClipboardContent(
-                    type = ClipboardContent.ContentType.TEXT,
-                    data = clipboardText.toByteArray(Charsets.UTF_8),
-                    mimeType = "text/plain",
-                    timestamp = currentTime,
-                    source = "shizuku",
-                    size = clipboardText.length.toLong(),
-                    metadata = mapOf(
-                        "method" to "shizuku",
-                        "android_version" to Build.VERSION.SDK_INT.toString()
+                if (contentHash != lastClipboardContentHash) {
+                    lastClipboardContentHash = contentHash
+                    lastChangeTime = currentTime
+                    
+                    Log.i(TAG, "Clipboard changed via Shizuku: ${clipboardText.take(50)}...")
+                    
+                    val content = ClipboardContent(
+                        type = ClipboardContent.ContentType.TEXT,
+                        data = clipboardText.toByteArray(Charsets.UTF_8),
+                        mimeType = "text/plain",
+                        timestamp = currentTime,
+                        source = "shizuku",
+                        size = clipboardText.length.toLong(),
+                        metadata = mapOf(
+                            "method" to "shizuku",
+                            "android_version" to Build.VERSION.SDK_INT.toString()
+                        )
                     )
-                )
-                
-                // Notify listener
-                val listener = clipboardListener
-                if (listener != null) {
-                    Log.d(TAG, "Notifying clipboard listener of change")
-                    withContext(Dispatchers.Main) {
-                        listener.onClipboardChanged(content, currentTime)
+                    
+                    // Notify listener
+                    val listener = clipboardListener
+                    if (listener != null) {
+                        Log.d(TAG, "Notifying clipboard listener of change")
+                        withContext(Dispatchers.Main) {
+                            listener.onClipboardChanged(content, currentTime)
+                        }
+                        Log.d(TAG, "Clipboard listener notified successfully")
+                    } else {
+                        Log.w(TAG, "No clipboard listener set, cannot notify of clipboard change!")
                     }
-                    Log.d(TAG, "Clipboard listener notified successfully")
-                } else {
-                    Log.w(TAG, "No clipboard listener set, cannot notify of clipboard change!")
                 }
             }
         } catch (e: Exception) {

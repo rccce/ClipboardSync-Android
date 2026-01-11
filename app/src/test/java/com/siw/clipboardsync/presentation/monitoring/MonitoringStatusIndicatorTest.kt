@@ -8,8 +8,6 @@ import com.siw.clipboardsync.ui.theme.ClipboardSyncTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mockito.kotlin.mock
-import org.mockito.kotlin.verify
 
 @RunWith(AndroidJUnit4::class)
 class MonitoringStatusIndicatorTest {
@@ -27,7 +25,7 @@ class MonitoringStatusIndicatorTest {
             ClipboardSyncTheme {
                 MonitoringStatusIndicator(
                     isMonitoring = true,
-                    currentMethod = MonitoringMethod.SYSTEM_HOOKS,
+                    currentMethod = MonitoringMethod.XPOSED_HOOKS,
                     hasPermissions = true,
                     onSettingsClick = { settingsClicked = true }
                 )
@@ -36,7 +34,7 @@ class MonitoringStatusIndicatorTest {
 
         // Then
         composeTestRule.onNodeWithText("Advanced Monitoring - Active").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Method: System Hooks").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Method: Xposed").assertIsDisplayed()
         
         // Click settings button
         composeTestRule.onNodeWithContentDescription("Monitoring Settings").performClick()
@@ -59,7 +57,7 @@ class MonitoringStatusIndicatorTest {
 
         // Then
         composeTestRule.onNodeWithText("Advanced Monitoring - Inactive").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Method: System Hooks").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Method: Xposed").assertDoesNotExist()
     }
 
     @Test
@@ -88,13 +86,13 @@ class MonitoringStatusIndicatorTest {
             ClipboardSyncTheme {
                 CompactMonitoringStatus(
                     isMonitoring = true,
-                    currentMethod = MonitoringMethod.ACCESSIBILITY_SERVICE
+                    currentMethod = MonitoringMethod.SHIZUKU
                 )
             }
         }
 
         // Then
-        composeTestRule.onNodeWithText("Active (Accessibility)").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Active (Shizuku)").assertIsDisplayed()
     }
 
     @Test
@@ -122,7 +120,7 @@ class MonitoringStatusIndicatorTest {
         composeTestRule.setContent {
             ClipboardSyncTheme {
                 MonitoringMethodChip(
-                    method = MonitoringMethod.SYSTEM_HOOKS,
+                    method = MonitoringMethod.XPOSED_HOOKS,
                     isActive = true,
                     onClick = { chipClicked = true }
                 )
@@ -130,10 +128,10 @@ class MonitoringStatusIndicatorTest {
         }
 
         // Then
-        composeTestRule.onNodeWithText("System Hooks").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Xposed").assertIsDisplayed()
         
         // Click the chip
-        composeTestRule.onNodeWithText("System Hooks").performClick()
+        composeTestRule.onNodeWithText("Xposed").performClick()
         assert(chipClicked)
     }
 
@@ -143,7 +141,7 @@ class MonitoringStatusIndicatorTest {
         composeTestRule.setContent {
             ClipboardSyncTheme {
                 MonitoringMethodChip(
-                    method = MonitoringMethod.POLLING_FALLBACK,
+                    method = MonitoringMethod.FOREGROUND_SYNC,
                     isActive = false,
                     onClick = {}
                 )
@@ -151,17 +149,16 @@ class MonitoringStatusIndicatorTest {
         }
 
         // Then
-        composeTestRule.onNodeWithText("Polling").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Foreground").assertIsDisplayed()
     }
 
     @Test
     fun monitoringStatusIndicator_differentMethods_displayCorrectNames() {
+        // Test all 3 monitoring methods display correct names
         val methods = listOf(
-            MonitoringMethod.SYSTEM_HOOKS to "System Hooks",
             MonitoringMethod.XPOSED_HOOKS to "Xposed",
-            MonitoringMethod.ACCESSIBILITY_SERVICE to "Accessibility",
-            MonitoringMethod.FOREGROUND_SERVICE to "Foreground",
-            MonitoringMethod.POLLING_FALLBACK to "Polling"
+            MonitoringMethod.SHIZUKU to "Shizuku",
+            MonitoringMethod.FOREGROUND_SYNC to "Foreground"
         )
 
         methods.forEach { (method, expectedName) ->

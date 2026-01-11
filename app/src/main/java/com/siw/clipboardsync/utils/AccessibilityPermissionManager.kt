@@ -136,24 +136,24 @@ class AccessibilityPermissionManager(private val context: Context) {
     }
     
     /**
-     * Checks if the accessibility service is both enabled and actively monitoring.
-     * @return true if service is enabled and monitoring, false otherwise
+     * Checks if the accessibility service is enabled and running.
+     * Note: The accessibility service is now only used for keep-alive, not clipboard monitoring.
+     * @return true if service is enabled and running, false otherwise
      */
-    fun isServiceActiveAndMonitoring(): Boolean {
-        val service = ClipboardAccessibilityService.getInstance()
-        return service != null && service.isMonitoring()
+    fun isServiceActiveAndRunning(): Boolean {
+        return isAccessibilityServiceEnabled() && isServiceRunning()
     }
     
     /**
      * Gets the current status of the accessibility service.
+     * Note: The accessibility service is now only used for keep-alive, not clipboard monitoring.
      * @return AccessibilityServiceStatus indicating current state
      */
     fun getServiceStatus(): AccessibilityServiceStatus {
         return when {
             !isAccessibilityServiceEnabled() -> AccessibilityServiceStatus.NOT_ENABLED
             !isServiceRunning() -> AccessibilityServiceStatus.ENABLED_BUT_NOT_RUNNING
-            !isServiceActiveAndMonitoring() -> AccessibilityServiceStatus.RUNNING_BUT_NOT_MONITORING
-            else -> AccessibilityServiceStatus.ACTIVE_AND_MONITORING
+            else -> AccessibilityServiceStatus.ACTIVE_FOR_KEEP_ALIVE
         }
     }
     
@@ -182,11 +182,11 @@ class AccessibilityPermissionManager(private val context: Context) {
     
     /**
      * Enumeration of possible accessibility service states.
+     * Note: The accessibility service is now only used for keep-alive, not clipboard monitoring.
      */
     enum class AccessibilityServiceStatus {
         NOT_ENABLED,
         ENABLED_BUT_NOT_RUNNING,
-        RUNNING_BUT_NOT_MONITORING,
-        ACTIVE_AND_MONITORING
+        ACTIVE_FOR_KEEP_ALIVE
     }
 }

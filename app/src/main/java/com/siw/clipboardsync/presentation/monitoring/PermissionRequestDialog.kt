@@ -46,7 +46,6 @@ fun PermissionRequestDialog(
                         PermissionType.ACCESSIBILITY -> Icons.Default.Settings
                         PermissionType.NOTIFICATION -> Icons.Default.Notifications
                         PermissionType.OVERLAY -> Icons.Default.Info
-                        PermissionType.READ_LOGS -> Icons.Default.List
                     },
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
@@ -60,7 +59,6 @@ fun PermissionRequestDialog(
                         PermissionType.ACCESSIBILITY -> "Accessibility Permission Required"
                         PermissionType.NOTIFICATION -> "Notification Permission Required"
                         PermissionType.OVERLAY -> "Overlay Permission Required"
-                        PermissionType.READ_LOGS -> "READ_LOGS Permission Required"
                     },
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
@@ -71,10 +69,9 @@ fun PermissionRequestDialog(
                 
                 Text(
                     text = when (permissionType) {
-                        PermissionType.ACCESSIBILITY -> "ClipboardSync needs accessibility permission to monitor clipboard changes in the background. This enables reliable clipboard synchronization without draining your battery."
+                        PermissionType.ACCESSIBILITY -> "ClipboardSync needs accessibility permission for app keep-alive functionality. This helps the app stay running in the background."
                         PermissionType.NOTIFICATION -> "ClipboardSync needs notification permission to show you important updates about clipboard synchronization and any issues that may occur."
                         PermissionType.OVERLAY -> "ClipboardSync needs overlay permission to display clipboard content previews and quick actions over other apps."
-                        PermissionType.READ_LOGS -> "ClipboardSync can use READ_LOGS permission to detect clipboard changes by monitoring system logs. This requires granting the permission via ADB command on a computer."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
@@ -117,16 +114,12 @@ fun PermissionRequestDialog(
                                     val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
                                     context.startActivity(intent)
                                 }
-                                PermissionType.READ_LOGS -> {
-                                    // READ_LOGS cannot be granted via settings, show instructions only
-                                    // The dialog already shows the ADB command instructions
-                                }
                             }
                             onGranted()
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text(if (permissionType == PermissionType.READ_LOGS) "Got It" else "Open Settings")
+                        Text("Open Settings")
                     }
                 }
             }
@@ -199,24 +192,6 @@ private fun PermissionSteps(permissionType: PermissionType) {
                     PermissionStep(
                         step = "3",
                         description = "Toggle 'Allow display over other apps'"
-                    )
-                }
-                PermissionType.READ_LOGS -> {
-                    PermissionStep(
-                        step = "1",
-                        description = "Enable USB debugging on your device"
-                    )
-                    PermissionStep(
-                        step = "2",
-                        description = "Connect device to computer with ADB"
-                    )
-                    PermissionStep(
-                        step = "3",
-                        description = "Run: adb shell pm grant com.siw.clipboardsync android.permission.READ_LOGS"
-                    )
-                    PermissionStep(
-                        step = "4",
-                        description = "Return to app and verify permission status"
                     )
                 }
             }
@@ -303,7 +278,6 @@ fun PermissionStatusCard(
                             PermissionType.ACCESSIBILITY -> "Accessibility Service"
                             PermissionType.NOTIFICATION -> "Notifications"
                             PermissionType.OVERLAY -> "Display Over Apps"
-                            PermissionType.READ_LOGS -> "Read System Logs"
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
@@ -338,9 +312,12 @@ fun PermissionStatusCard(
     }
 }
 
+/**
+ * Permission types supported by the app.
+ * Note: READ_LOGS was removed as it's no longer used for clipboard monitoring.
+ */
 enum class PermissionType {
     ACCESSIBILITY,
     NOTIFICATION,
-    OVERLAY,
-    READ_LOGS
+    OVERLAY
 }

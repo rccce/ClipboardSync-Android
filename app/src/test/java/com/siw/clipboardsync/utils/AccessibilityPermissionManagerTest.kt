@@ -10,6 +10,10 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.*
 
+/**
+ * Unit tests for AccessibilityPermissionManager.
+ * Note: The accessibility service is now only used for keep-alive, not clipboard monitoring.
+ */
 class AccessibilityPermissionManagerTest {
     
     private lateinit var context: Context
@@ -175,7 +179,6 @@ class AccessibilityPermissionManagerTest {
         assertTrue(instructions.contains("Settings"))
         assertTrue(instructions.contains("Accessibility"))
         assertTrue(instructions.contains("ClipboardSync"))
-        assertTrue(instructions.contains("step"))
     }
     
     @Test
@@ -186,7 +189,6 @@ class AccessibilityPermissionManagerTest {
         // Then: Should contain clear explanation
         assertTrue(rationale.contains("accessibility service"))
         assertTrue(rationale.contains("clipboard"))
-        assertTrue(rationale.contains("Android 10+"))
     }
     
     @Test
@@ -203,26 +205,38 @@ class AccessibilityPermissionManagerTest {
     }
     
     @Test
-    fun `isServiceActiveAndMonitoring returns true when service is active and monitoring`() {
-        // Given: Service is active and monitoring
-        val mockService = mockk<ClipboardAccessibilityService>()
-        every { ClipboardAccessibilityService.getInstance() } returns mockService
-        every { mockService.isMonitoring() } returns true
+    fun `isServiceActiveAndRunning returns true when service is enabled and running`() {
+        // Given: Service is enabled and running
+        setupAccessibilityServiceEnabled()
+        every { ClipboardAccessibilityService.isServiceRunning() } returns true
         
-        // When: Checking if service is active and monitoring
-        val result = permissionManager.isServiceActiveAndMonitoring()
+        // When: Checking if service is active and running
+        val result = permissionManager.isServiceActiveAndRunning()
         
         // Then: Should return true
         assertTrue(result)
     }
     
     @Test
-    fun `isServiceActiveAndMonitoring returns false when service is not available`() {
-        // Given: Service is not available
-        every { ClipboardAccessibilityService.getInstance() } returns null
+    fun `isServiceActiveAndRunning returns false when service is not enabled`() {
+        // Given: Service is not enabled
+        setupAccessibilityServiceNotEnabled()
         
-        // When: Checking if service is active and monitoring
-        val result = permissionManager.isServiceActiveAndMonitoring()
+        // When: Checking if service is active and running
+        val result = permissionManager.isServiceActiveAndRunning()
+        
+        // Then: Should return false
+        assertFalse(result)
+    }
+    
+    @Test
+    fun `isServiceActiveAndRunning returns false when service is enabled but not running`() {
+        // Given: Service is enabled but not running
+        setupAccessibilityServiceEnabled()
+        every { ClipboardAccessibilityService.isServiceRunning() } returns false
+        
+        // When: Checking if service is active and running
+        val result = permissionManager.isServiceActiveAndRunning()
         
         // Then: Should return false
         assertFalse(result)
@@ -254,35 +268,16 @@ class AccessibilityPermissionManagerTest {
     }
     
     @Test
-    fun `getServiceStatus returns RUNNING_BUT_NOT_MONITORING when service is running but not monitoring`() {
-        // Given: Service is running but not monitoring
+    fun `getServiceStatus returns ACTIVE_FOR_KEEP_ALIVE when service is running`() {
+        // Given: Service is enabled and running
         setupAccessibilityServiceEnabled()
         every { ClipboardAccessibilityService.isServiceRunning() } returns true
-        val mockService = mockk<ClipboardAccessibilityService>()
-        every { ClipboardAccessibilityService.getInstance() } returns mockService
-        every { mockService.isMonitoring() } returns false
         
         // When: Getting service status
         val status = permissionManager.getServiceStatus()
         
-        // Then: Should return RUNNING_BUT_NOT_MONITORING
-        assertEquals(AccessibilityPermissionManager.AccessibilityServiceStatus.RUNNING_BUT_NOT_MONITORING, status)
-    }
-    
-    @Test
-    fun `getServiceStatus returns ACTIVE_AND_MONITORING when service is fully active`() {
-        // Given: Service is fully active and monitoring
-        setupAccessibilityServiceEnabled()
-        every { ClipboardAccessibilityService.isServiceRunning() } returns true
-        val mockService = mockk<ClipboardAccessibilityService>()
-        every { ClipboardAccessibilityService.getInstance() } returns mockService
-        every { mockService.isMonitoring() } returns true
-        
-        // When: Getting service status
-        val status = permissionManager.getServiceStatus()
-        
-        // Then: Should return ACTIVE_AND_MONITORING
-        assertEquals(AccessibilityPermissionManager.AccessibilityServiceStatus.ACTIVE_AND_MONITORING, status)
+        // Then: Should return ACTIVE_FOR_KEEP_ALIVE
+        assertEquals(AccessibilityPermissionManager.AccessibilityServiceStatus.ACTIVE_FOR_KEEP_ALIVE, status)
     }
     
     @Test

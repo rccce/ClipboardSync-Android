@@ -17,12 +17,8 @@
     <!-- Boot receiver for auto-start -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     
-    <!-- Accessibility service permission for clipboard monitoring -->
+    <!-- Accessibility service permission for keep-alive functionality -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
-    
-    <!-- READ_LOGS permission for logcat-based clipboard monitoring (requires ADB grant) -->
-    <uses-permission android:name="android.permission.READ_LOGS" 
-        tools:ignore="ProtectedPermissions" />
 
     <application
         android:name=".ClipboardSyncApplication"
@@ -53,6 +49,8 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@style/Theme.ClipboardSync">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

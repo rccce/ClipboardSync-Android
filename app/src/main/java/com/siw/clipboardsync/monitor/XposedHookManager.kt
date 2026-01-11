@@ -62,37 +62,36 @@ class XposedHookManager @Inject constructor(
     }
     
     /**
-     * Checks if Xposed/LSPosed framework is available AND our app is actually hooked.
+     * Checks if Xposed/LSPosed framework is available AND ACTIVE for clipboard monitoring.
      * 
-     * IMPORTANT: Just detecting that LSPosed is installed is NOT enough.
-     * We need to verify that:
-     * 1. The Xposed framework is running
-     * 2. Our clipboard hook module is enabled
-     * 3. Our app is actually being hooked
+     * For clipboard sync, the Xposed module hooks the SYSTEM FRAMEWORK (not our app),
+     * so we need to verify:
+     * 1. The framework is installed
+     * 2. The framework is actually running (module enabled, device rebooted after enabling)
      * 
-     * Without these checks, we might incorrectly report Xposed as available
-     * when it's not actually working for clipboard monitoring.
+     * This prevents the app from thinking Xposed is available when:
+     * - LSPosed is installed but module is disabled
+     * - Module was just enabled but device hasn't rebooted
+     * - Xposed framework was disabled in settings
      */
     fun isAvailable(): Boolean {
         return try {
-            // First check if any Xposed framework is detected
             val frameworkType = detectXposedFramework()
             if (frameworkType == XposedFrameworkType.NONE) {
                 Log.d(TAG, "No Xposed framework detected")
                 return false
             }
             
-            // CRITICAL: Check if we're actually running in an Xposed environment
-            // This means our app has been hooked by the Xposed module
-            val isHooked = isRunningInXposedEnvironment()
-            if (!isHooked) {
-                Log.w(TAG, "Xposed framework detected ($frameworkType) but our app is NOT hooked. " +
-                        "Make sure the clipboard hook module is enabled in LSPosed Manager " +
-                        "and our app is in the module's scope.")
+            // CRITICAL: Check if Xposed is actually running, not just installed
+            // This is the key fix - we need to verify the framework is active
+            val isActive = isXposedFrameworkActive()
+            if (!isActive) {
+                Log.w(TAG, "Xposed framework installed ($frameworkType) but NOT ACTIVE")
+                Log.w(TAG, "Module may be disabled or device needs reboot after enabling")
                 return false
             }
             
-            Log.i(TAG, "Xposed framework available and our app is hooked: $frameworkType")
+            Log.i(TAG, "Xposed framework available and active: $frameworkType")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error checking Xposed framework availability", e)
@@ -101,8 +100,74 @@ class XposedHookManager @Inject constructor(
     }
     
     /**
+     * Checks if Xposed framework is actually active and running.
+     * This verifies that the module is enabled and the device has been rebooted.
+     * 
+     * Detection methods:
+     * 1. Check if we're running in Xposed environment (our app is hooked)
+     * 2. Check for Xposed system properties
+     * 3. Check for recent clipboard broadcasts from Xposed module
+     */
+    private fun isXposedFrameworkActive(): Boolean {
+        // Method 1: Check if our app is running in Xposed environment
+        if (isRunningInXposedEnvironment()) {
+            Log.d(TAG, "Xposed framework active: running in Xposed environment")
+            return true
+        }
+        
+        // Method 2: Check system properties that indicate Xposed is running
+        try {
+            val xposedBridgeVersion = System.getProperty("xposed.bridge.version")
+            if (xposedBridgeVersion != null) {
+                Log.d(TAG, "Xposed framework active: bridge version $xposedBridgeVersion")
+                return true
+            }
+        } catch (e: Exception) {
+            // Property not available
+        }
+        
+        // Method 3: Check for LSPosed-specific indicators
+        try {
+            // LSPosed sets this property when active
+            val lsposedVersion = System.getProperty("lsposed.version")
+            if (lsposedVersion != null) {
+                Log.d(TAG, "LSPosed framework active: version $lsposedVersion")
+                return true
+            }
+        } catch (e: Exception) {
+            // Property not available
+        }
+        
+        // Method 4: Check SharedPreferences for recent Xposed broadcast
+        // StaticClipboardReceiver saves timestamp when it receives broadcasts
+        try {
+            val prefs = context.getSharedPreferences("xposed_status", Context.MODE_PRIVATE)
+            val lastBroadcastTime = prefs.getLong("last_xposed_broadcast", 0)
+            val timeSinceLastBroadcast = System.currentTimeMillis() - lastBroadcastTime
+            // If we received a broadcast in the last 24 hours, Xposed is likely active
+            if (lastBroadcastTime > 0 && timeSinceLastBroadcast < 24 * 60 * 60 * 1000) {
+                Log.d(TAG, "Xposed framework active: received broadcast ${timeSinceLastBroadcast / 1000}s ago")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking Xposed broadcast history", e)
+        }
+        
+        Log.d(TAG, "Xposed framework not active: no evidence of running framework")
+        return false
+    }
+    
+    /**
      * Hooks the clipboard service to monitor clipboard changes.
-     * @param callback function to call when clipboard changes
+     * 
+     * Note: For LSPosed/EdXposed, the actual clipboard monitoring is done by:
+     * 1. The Xposed module (ClipboardHookModule) hooks System Framework
+     * 2. The module sends broadcasts when clipboard changes
+     * 3. StaticClipboardReceiver (registered in AndroidManifest) receives broadcasts
+     * 
+     * This method just marks the hook as active - no dynamic receiver registration needed.
+     * 
+     * @param callback function to call when clipboard changes (not used for LSPosed)
      */
     fun hookClipboardService(callback: (ClipboardContent) -> Unit) {
         try {
@@ -117,27 +182,17 @@ class XposedHookManager @Inject constructor(
             this.clipboardCallback = callback
             xposedFrameworkType = detectXposedFramework()
             
-            // Register broadcast receiver for Xposed module communication
-            registerClipboardHookReceiver()
+            // For LSPosed/EdXposed, we don't need to register a dynamic receiver
+            // because StaticClipboardReceiver (in AndroidManifest) handles broadcasts
+            // from the Xposed module. This prevents duplicate processing.
             
-            when (xposedFrameworkType) {
-                XposedFrameworkType.XPOSED -> hookWithXposed()
-                XposedFrameworkType.LSPOSED -> hookWithLSPosed()
-                XposedFrameworkType.EDXPOSED -> hookWithEdXposed()
-                XposedFrameworkType.NONE -> throw ClipboardMonitorException(
-                    ClipboardError.XposedFrameworkError(
-                        IllegalStateException("No supported Xposed framework found")
-                    )
-                )
-            }
+            Log.i(TAG, "Xposed clipboard hook activated using ${xposedFrameworkType.name}")
+            Log.i(TAG, "Clipboard changes will be received via StaticClipboardReceiver")
             
             isHooked = true
-            Log.i(TAG, "Clipboard service hooked successfully using ${xposedFrameworkType.name}")
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to hook clipboard service", e)
-            // Clean up receiver on failure
-            unregisterClipboardHookReceiver()
             throw if (e is ClipboardMonitorException) e else ClipboardMonitorException(
                 ClipboardError.XposedFrameworkError(e)
             )
@@ -208,16 +263,6 @@ class XposedHookManager @Inject constructor(
     fun unhookClipboardService() {
         try {
             if (isHooked) {
-                // Unregister broadcast receiver first
-                unregisterClipboardHookReceiver()
-                
-                when (xposedFrameworkType) {
-                    XposedFrameworkType.XPOSED -> unhookFromXposed()
-                    XposedFrameworkType.LSPOSED -> unhookFromLSPosed()
-                    XposedFrameworkType.EDXPOSED -> unhookFromEdXposed()
-                    XposedFrameworkType.NONE -> { /* Nothing to unhook */ }
-                }
-                
                 isHooked = false
                 clipboardCallback = null
                 Log.i(TAG, "Clipboard service unhooked successfully")

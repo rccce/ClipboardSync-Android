@@ -8,9 +8,7 @@ import android.util.Log
 import com.siw.clipboardsync.monitor.model.ClipboardError
 import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.monitor.ClipboardMonitor
-import com.siw.clipboardsync.monitor.AccessibilityClipboardMonitor
-import com.siw.clipboardsync.monitor.ForegroundServiceClipboardMonitor
-import com.siw.clipboardsync.monitor.PollingClipboardMonitor
+import com.siw.clipboardsync.monitor.ForegroundSyncClipboardMonitor
 import com.siw.clipboardsync.monitor.ShizukuClipboardMonitor
 import com.siw.clipboardsync.monitor.SystemLevelClipboardMonitor
 import com.siw.clipboardsync.service.RootDetectionService
@@ -23,10 +21,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Handles clipboard monitoring errors with retry logic, fallback chain,
- * and state persistence.
+ * Handles clipboard monitoring errors with retry logic and fallback.
  * 
- * Requirements: 10.1, 10.2, 10.3, 10.4
+ * Simplified monitoring model:
+ * - XPOSED_HOOKS: Full background sync (highest priority)
+ * - SHIZUKU: Full background sync without root
+ * - FOREGROUND_SYNC: Sync when app comes to foreground (fallback)
  */
 @Singleton
 class ClipboardErrorHandler @Inject constructor(
@@ -52,13 +52,11 @@ class ClipboardErrorHandler @Inject constructor(
         private const val PERSISTENT_FAILURE_THRESHOLD = 5
     }
     
+    // Simplified fallback chain - only methods that actually work
     private val fallbackChain = listOf(
-        MonitoringMethod.SYSTEM_HOOKS,
         MonitoringMethod.XPOSED_HOOKS,
-        MonitoringMethod.READ_LOGS,
-        MonitoringMethod.ACCESSIBILITY_SERVICE,
-        MonitoringMethod.FOREGROUND_SERVICE,
-        MonitoringMethod.POLLING_FALLBACK
+        MonitoringMethod.SHIZUKU,
+        MonitoringMethod.FOREGROUND_SYNC
     )
     
     private val _currentMethod = MutableStateFlow<MonitoringMethod?>(null)
@@ -455,8 +453,9 @@ class ClipboardErrorHandler @Inject constructor(
     }
     
     private suspend fun switchToNonRootMethod(): ClipboardMonitor? {
+        // In simplified model, only SHIZUKU and FOREGROUND_SYNC are non-root methods
         val nonRootMethods = fallbackChain.filter { 
-            it != MonitoringMethod.SYSTEM_HOOKS && it != MonitoringMethod.XPOSED_HOOKS 
+            it != MonitoringMethod.XPOSED_HOOKS 
         }
         return tryMethodChain(nonRootMethods)
     }
@@ -551,60 +550,33 @@ class ClipboardErrorHandler @Inject constructor(
     
     private suspend fun isMethodAvailable(method: MonitoringMethod): Boolean {
         return when (method) {
-            MonitoringMethod.SYSTEM_HOOKS -> {
-                rootDetectionService.isRooted() && 
-                rootDetectionService.getRootCapabilities().hasSystemHooks
-            }
             MonitoringMethod.XPOSED_HOOKS -> {
-                rootDetectionService.isRooted() && 
                 rootDetectionService.getRootCapabilities().hasXposedFramework
-            }
-            MonitoringMethod.READ_LOGS -> {
-                // Check if READ_LOGS permission is granted
-                try {
-                    context.checkSelfPermission(android.Manifest.permission.READ_LOGS) == 
-                        android.content.pm.PackageManager.PERMISSION_GRANTED
-                } catch (e: Exception) {
-                    false
-                }
             }
             MonitoringMethod.SHIZUKU -> {
                 // Check if Shizuku is available
                 try {
-                    rikka.shizuku.Shizuku.pingBinder()
+                    rikka.shizuku.Shizuku.pingBinder() &&
+                    rikka.shizuku.Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
                 } catch (e: Exception) {
                     false
                 }
             }
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> {
-                accessibilityPermissionManager.isAccessibilityServiceEnabled()
-            }
-            MonitoringMethod.FOREGROUND_SERVICE -> true
-            MonitoringMethod.POLLING_FALLBACK -> true
+            MonitoringMethod.FOREGROUND_SYNC -> true // Always available as fallback
         }
     }
     
     private fun createMonitorForMethod(method: MonitoringMethod): ClipboardMonitor? {
         return when (method) {
-            MonitoringMethod.SYSTEM_HOOKS,
             MonitoringMethod.XPOSED_HOOKS -> {
-                // These would be created by dependency injection in real implementation
-                null // SystemLevelClipboardMonitor()
-            }
-            MonitoringMethod.READ_LOGS -> {
-                null // LogcatClipboardMonitor()
+                // Created by dependency injection
+                null
             }
             MonitoringMethod.SHIZUKU -> {
                 ShizukuClipboardMonitor(context)
             }
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> {
-                null // AccessibilityClipboardMonitor()
-            }
-            MonitoringMethod.FOREGROUND_SERVICE -> {
-                null // ForegroundServiceClipboardMonitor()
-            }
-            MonitoringMethod.POLLING_FALLBACK -> {
-                null // PollingClipboardMonitor()
+            MonitoringMethod.FOREGROUND_SYNC -> {
+                ForegroundSyncClipboardMonitor(context)
             }
         }
     }

@@ -4,7 +4,6 @@ import android.app.*
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -15,12 +14,24 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.siw.clipboardsync.R
 import com.siw.clipboardsync.data.repository.ClipboardRepository
 import com.siw.clipboardsync.manager.ClipboardSyncManager
+import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.utils.ClipboardUtils
 import com.siw.clipboardsync.utils.DeviceUtils
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import javax.inject.Inject
 
+/**
+ * Foreground service for clipboard synchronization.
+ * 
+ * Simplified monitoring model based on real-world testing:
+ * - XPOSED_HOOKS: Full background sync (highest priority)
+ * - SHIZUKU: Full background sync without root
+ * - FOREGROUND_SYNC: Sync when app comes to foreground (fallback)
+ * 
+ * Only ONE method is active at a time (mutually exclusive).
+ * No polling is used - background sync only works with Xposed or Shizuku.
+ */
 @AndroidEntryPoint
 class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     
@@ -33,20 +44,13 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     private lateinit var clipboardManager: ClipboardManager
-    private var lastClipboardContent: String? = null
     private var lastClipboardHash: String? = null
     private var isMonitoring = false
     private var deviceId: String? = null
     private var isAppInForeground = false
-    private var backgroundAccessDeniedCount = 0
-    private var isShowingBackgroundLimitationNotification = false
     
-    // Advanced monitoring integration
-    private var useAdvancedMonitoring = true
-    private var advancedMonitoringEnabled = false
-    private var fallbackToPolling = false
-    
-    // Initialization state
+    // Monitoring state
+    private var currentMonitoringMethod: MonitoringMethod? = null
     private var initializationJob: Job? = null
     private var isInitialized = false
     
@@ -58,11 +62,6 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
         const val ACTION_MANUAL_SYNC = "MANUAL_SYNC"
         
         private const val TAG = "ClipboardMonitorService"
-        
-        // Adaptive polling intervals based on Android version and app state
-        private const val FOREGROUND_POLL_INTERVAL = 500L // 0.5 seconds when app is active
-        private const val BACKGROUND_POLL_INTERVAL_OLD = 1000L // 1 second for Android 9 and below
-        private const val BACKGROUND_POLL_INTERVAL_NEW = 5000L // 5 seconds for Android 10+
         
         fun startService(context: Context) {
             val intent = Intent(context, ClipboardMonitorService::class.java).apply {
@@ -106,13 +105,14 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
                 clipboardSyncManager.initialize()
                 Log.d(TAG, "ClipboardSyncManager initialization completed")
                 
-                // Check if advanced monitoring is available and enable it
-                initializeAdvancedMonitoring()
+                // Initialize monitoring based on device capabilities
+                initializeMonitoring()
                 isInitialized = true
-                Log.d(TAG, "Service initialization completed, advancedMonitoringEnabled=$advancedMonitoringEnabled")
+                Log.d(TAG, "Service initialization completed, method=$currentMonitoringMethod")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to initialize sync manager", e)
-                isInitialized = true // Mark as initialized even on failure so we can fallback to polling
+                isInitialized = true
+                currentMonitoringMethod = MonitoringMethod.FOREGROUND_SYNC
             }
         }
     }
@@ -136,43 +136,60 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
         serviceScope.cancel()
     }
     
-    // Lifecycle observer methods
+    // Track if we've done the first foreground initialization
+    private var hasInitializedInForeground = false
+    
+    // Lifecycle observer methods - for FOREGROUND_SYNC mode
     override fun onStart(owner: LifecycleOwner) {
         super<DefaultLifecycleObserver>.onStart(owner)
+        val wasInBackground = !isAppInForeground
         isAppInForeground = true
-        backgroundAccessDeniedCount = 0 // Reset counter when app comes to foreground
+        Log.d(TAG, "App moved to foreground, wasInBackground=$wasInBackground, method=$currentMonitoringMethod")
         
-        // Reset to normal notification when app comes to foreground
-        if (isShowingBackgroundLimitationNotification) {
-            isShowingBackgroundLimitationNotification = false
-            updateNotification(getInitialNotificationText())
+        // If using FOREGROUND_SYNC mode, sync clipboard now
+        if (currentMonitoringMethod == MonitoringMethod.FOREGROUND_SYNC) {
+            Log.d(TAG, "FOREGROUND_SYNC mode - scheduling clipboard check")
+            serviceScope.launch {
+                // Wait for app to gain focus - Android 10+ requires focus to read clipboard
+                delay(200)
+                
+                if (isAppInForeground) {
+                    // First time we come to foreground, just initialize the hash without syncing
+                    // This prevents syncing old clipboard content that was there before app started
+                    if (!hasInitializedInForeground) {
+                        Log.d(TAG, "First foreground access - initializing clipboard hash without sync")
+                        initializeClipboardState()
+                        hasInitializedInForeground = true
+                    } else {
+                        Log.d(TAG, "Checking clipboard for changes")
+                        checkAndSyncClipboard()
+                    }
+                }
+            }
         }
-        
-        Log.d(TAG, "App moved to foreground - enabling aggressive clipboard monitoring")
     }
     
     override fun onStop(owner: LifecycleOwner) {
         super<DefaultLifecycleObserver>.onStop(owner)
         isAppInForeground = false
-        Log.d(TAG, "App moved to background - switching to conservative monitoring")
+        Log.d(TAG, "App moved to background")
     }
     
     private fun startMonitoring() {
         if (isMonitoring) return
         
         isMonitoring = true
-        val notificationText = getInitialNotificationText()
-        startForeground(NOTIFICATION_ID, createNotification(notificationText))
+        startForeground(NOTIFICATION_ID, createNotification("Initializing..."))
         
-        // Initialize with current clipboard content to avoid initial sync
+        // Initialize clipboard state
         initializeClipboardState()
         
-        // Start adaptive monitoring
+        // Start monitoring loop
         serviceScope.launch {
-            adaptiveClipboardMonitoring()
+            monitoringLoop()
         }
         
-        Log.i(TAG, "Started clipboard monitoring with Android ${Build.VERSION.RELEASE} optimizations")
+        Log.i(TAG, "Started clipboard monitoring service")
     }
     
     private fun stopMonitoring() {
@@ -183,31 +200,99 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     }
     
     private fun performManualSync() {
-        Log.d(TAG, "Manual sync requested")
+        Log.d(TAG, "Manual sync requested from notification")
         serviceScope.launch {
             try {
-                val clipData = clipboardManager.primaryClip
-                if (clipData != null && clipData.itemCount > 0) {
-                    val content = ClipboardUtils.extractTextContent(clipData)
-                    if (content != null && ClipboardUtils.shouldSyncContent(content)) {
-                        syncClipboardToCloud(content, "text", isManual = true)
+                // On Android 10+, we cannot read clipboard in background
+                // We need to bring the app to foreground first
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !isAppInForeground) {
+                    Log.d(TAG, "Android 10+ detected, bringing app to foreground for clipboard access")
+                    
+                    // Launch the main activity to get foreground access
+                    val intent = Intent(this@ClipboardMonitorService, com.siw.clipboardsync.MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP or 
+                                Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        putExtra("action", "manual_sync")
                     }
+                    startActivity(intent)
+                    
+                    // The actual sync will be triggered by MainActivity via MainViewModel.performManualSync()
+                    // So we don't need to do anything else here
+                    Log.d(TAG, "Activity launched for manual sync, sync will be handled by MainViewModel")
+                    return@launch
                 }
+                
+                // If already in foreground, perform manual sync directly
+                // Manual sync forces sync regardless of hash
+                forceCheckAndSyncClipboard()
+                
             } catch (e: Exception) {
                 Log.e(TAG, "Manual sync failed", e)
-                updateNotification("Manual sync failed - ${e.message}")
+                updateNotification("同步失败: ${e.message?.take(30)}")
+                delay(2000)
+                updateNotificationForMethod(currentMonitoringMethod)
             }
         }
     }
     
-    private fun getInitialNotificationText(): String {
-        return when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
-                "Monitoring clipboard (Android 10+ limitations apply)"
+    /**
+     * Force sync clipboard content regardless of hash.
+     * Used for manual sync requests.
+     */
+    private suspend fun forceCheckAndSyncClipboard() {
+        try {
+            val clipData = clipboardManager.primaryClip
+            if (clipData == null || clipData.itemCount == 0) {
+                Log.d(TAG, "No clipboard data for manual sync")
+                updateNotification("剪贴板为空")
+                delay(2000)
+                updateNotificationForMethod(currentMonitoringMethod)
+                return
             }
-            else -> {
-                "Monitoring clipboard..."
+            
+            val content = ClipboardUtils.extractTextContent(clipData)
+            if (content.isNullOrBlank()) {
+                Log.d(TAG, "No text content in clipboard")
+                updateNotification("剪贴板无文本内容")
+                delay(2000)
+                updateNotificationForMethod(currentMonitoringMethod)
+                return
             }
+            
+            Log.i(TAG, "Manual sync - syncing: ${content.take(50)}...")
+            
+            if (ClipboardUtils.shouldSyncContent(content)) {
+                val result = clipboardSyncManager.syncLocalClipboard(content, "text")
+                if (result.isSuccess) {
+                    // Update hash after successful sync
+                    lastClipboardHash = DeviceUtils.generateContentHash(content)
+                    Log.d(TAG, "Manual sync completed successfully")
+                    updateNotification("已同步")
+                    delay(2000)
+                    updateNotificationForMethod(currentMonitoringMethod)
+                } else {
+                    Log.w(TAG, "Manual sync failed: ${result.exceptionOrNull()?.message}")
+                    updateNotification("同步失败")
+                    delay(2000)
+                    updateNotificationForMethod(currentMonitoringMethod)
+                }
+            } else {
+                Log.d(TAG, "Content filtered out from sync")
+                updateNotification("内容被过滤")
+                delay(2000)
+                updateNotificationForMethod(currentMonitoringMethod)
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Clipboard access denied: ${e.message}")
+            updateNotification("无法访问剪贴板")
+            delay(2000)
+            updateNotificationForMethod(currentMonitoringMethod)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in manual sync", e)
+            updateNotification("同步失败: ${e.message?.take(20)}")
+            delay(2000)
+            updateNotificationForMethod(currentMonitoringMethod)
         }
     }
     
@@ -217,188 +302,135 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
             if (clipData != null && clipData.itemCount > 0) {
                 val content = ClipboardUtils.extractTextContent(clipData)
                 if (content != null) {
-                    lastClipboardContent = content
                     lastClipboardHash = DeviceUtils.generateContentHash(content)
-                    Log.d(TAG, "Initialized with current clipboard content")
+                    Log.d(TAG, "Initialized with current clipboard hash")
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to initialize clipboard state", e)
         }
     }
+
     
-    private suspend fun adaptiveClipboardMonitoring() {
-        Log.d(TAG, "Starting adaptive clipboard monitoring")
+    /**
+     * Initialize monitoring based on device capabilities.
+     * Only ONE method will be active (mutually exclusive).
+     */
+    private suspend fun initializeMonitoring() {
+        Log.d(TAG, "Determining optimal monitoring method...")
         
-        // Wait for initialization to complete before deciding on monitoring strategy
-        Log.d(TAG, "Waiting for initialization to complete...")
+        if (clipboardSyncManager.isAdvancedMonitoringAvailable()) {
+            val success = clipboardSyncManager.enableAdvancedMonitoring()
+            if (success) {
+                // Get the actual method being used
+                val status = clipboardSyncManager.getAdvancedMonitoringStatus()
+                currentMonitoringMethod = status.currentMethod
+                Log.i(TAG, "Advanced monitoring enabled: $currentMonitoringMethod")
+                updateNotificationForMethod(currentMonitoringMethod)
+                
+                // Observe method changes
+                serviceScope.launch {
+                    clipboardSyncManager.monitoringMethod.collect { method ->
+                        if (method != null && method != currentMonitoringMethod) {
+                            currentMonitoringMethod = method
+                            Log.d(TAG, "Monitoring method changed to: $method")
+                            updateNotificationForMethod(method)
+                        }
+                    }
+                }
+                return
+            }
+        }
+        
+        // Fallback to FOREGROUND_SYNC
+        currentMonitoringMethod = MonitoringMethod.FOREGROUND_SYNC
+        Log.i(TAG, "Using FOREGROUND_SYNC mode (sync on app focus)")
+        updateNotificationForMethod(MonitoringMethod.FOREGROUND_SYNC)
+    }
+    
+    /**
+     * Main monitoring loop.
+     * For FOREGROUND_SYNC mode, just keeps the service alive.
+     * For XPOSED/SHIZUKU modes, the actual monitoring is handled by those systems.
+     */
+    private suspend fun monitoringLoop() {
+        // Wait for initialization
         initializationJob?.join()
-        Log.d(TAG, "Initialization completed, advancedMonitoringEnabled=$advancedMonitoringEnabled, fallbackToPolling=$fallbackToPolling")
         
-        // If advanced monitoring is enabled, we don't need to poll
-        if (advancedMonitoringEnabled && !fallbackToPolling) {
-            Log.i(TAG, "Advanced monitoring is active, skipping polling loop")
-            
-            // Just monitor the advanced monitoring status and fallback if needed
-            while (isMonitoring) {
-                try {
-                    // Check if advanced monitoring is still active
-                    if (!clipboardSyncManager.isMonitoringActive.value) {
-                        Log.w(TAG, "Advanced monitoring became inactive, falling back to polling")
-                        fallbackToPolling = true
-                        break
+        Log.d(TAG, "Monitoring loop started, method=$currentMonitoringMethod")
+        
+        while (isMonitoring) {
+            try {
+                when (currentMonitoringMethod) {
+                    MonitoringMethod.XPOSED_HOOKS, MonitoringMethod.SHIZUKU -> {
+                        // Background sync is handled by the monitoring system
+                        // Just check if it's still active
+                        if (!clipboardSyncManager.isMonitoringActive.value) {
+                            Log.w(TAG, "Advanced monitoring became inactive, switching to FOREGROUND_SYNC")
+                            currentMonitoringMethod = MonitoringMethod.FOREGROUND_SYNC
+                            updateNotificationForMethod(MonitoringMethod.FOREGROUND_SYNC)
+                        }
+                        delay(5000) // Check every 5 seconds
                     }
                     
-                    delay(5000) // Check every 5 seconds
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error monitoring advanced monitoring status", e)
-                    fallbackToPolling = true
-                    break
-                }
-            }
-        }
-        
-        // Use legacy polling if advanced monitoring is not available or failed
-        if (shouldUseLegacyPolling()) {
-            Log.i(TAG, "Using legacy polling for clipboard monitoring")
-            
-            while (isMonitoring) {
-                try {
-                    val pollInterval = calculatePollInterval()
-                    val success = checkClipboardChanges()
-                    
-                    if (!success && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        handleBackgroundAccessDenied()
+                    MonitoringMethod.FOREGROUND_SYNC -> {
+                        // No background sync - just keep service alive
+                        // Sync happens in onStart() when app comes to foreground
+                        delay(60000) // Just keep alive, check every minute
                     }
                     
-                    delay(pollInterval)
-                    
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error in clipboard monitoring loop", e)
-                    delay(5000) // Wait longer on error
+                    else -> {
+                        delay(5000)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in monitoring loop", e)
+                delay(5000)
             }
         }
     }
     
-    private fun calculatePollInterval(): Long {
-        return when {
-            isAppInForeground -> {
-                FOREGROUND_POLL_INTERVAL
-            }
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
-                // Android 10+ has background restrictions
-                BACKGROUND_POLL_INTERVAL_NEW
-            }
-            else -> {
-                // Android 9 and below - more frequent polling is safe
-                BACKGROUND_POLL_INTERVAL_OLD
-            }
-        }
-    }
-    
-    private suspend fun checkClipboardChanges(): Boolean {
-        return try {
-            // Check for Android 10+ background restrictions
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !isAppInForeground) {
-                // Attempt clipboard access but expect it might fail
-                val clipData = clipboardManager.primaryClip
-                if (clipData == null) {
-                    // This is expected behavior on Android 10+ in background
-                    Log.v(TAG, "Clipboard access restricted in background (Android 10+)")
-                    return false
-                }
-            }
-            
-            val clipData = clipboardManager.primaryClip ?: return true
-            if (clipData.itemCount == 0) return true
-            
-            val content = ClipboardUtils.extractTextContent(clipData)
-            if (content.isNullOrBlank()) return true
-            
-            val contentHash = DeviceUtils.generateContentHash(content)
-            
-            // Check if content has changed
-            if (contentHash != lastClipboardHash) {
-                lastClipboardContent = content
-                lastClipboardHash = contentHash
-                
-                Log.d(TAG, "Clipboard content changed: ${content.take(50)}...")
-                
-                // Sync to cloud
-                syncClipboardToCloud(content, "text")
-                updateNotification("Syncing clipboard...")
-            }
-            
-            true // Success
-            
-        } catch (e: SecurityException) {
-            Log.w(TAG, "Clipboard access denied: ${e.message}")
-            false // Access denied
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking clipboard changes", e)
-            false // Other error
-        }
-    }
-    
-    private fun handleBackgroundAccessDenied() {
-        backgroundAccessDeniedCount++
-        
-        when {
-            backgroundAccessDeniedCount == 1 -> {
-                Log.i(TAG, "Background clipboard access restricted - this is expected on Android 10+")
-                updateNotification("Limited background access (Android 10+)")
-            }
-            backgroundAccessDeniedCount >= 5 && !isShowingBackgroundLimitationNotification -> {
-                Log.i(TAG, "Consistent background access denial - updating notification with manual sync option")
-                isShowingBackgroundLimitationNotification = true
-                updateNotificationForBackgroundLimitation()
-                backgroundAccessDeniedCount = 0 // Reset counter
-            }
-        }
-    }
-    
-    private fun updateNotificationForBackgroundLimitation() {
-        // Update the existing foreground notification instead of creating a new one
-        updateNotification("Background access limited - tap Manual Sync when needed")
-    }
-    
-    private fun createManualSyncPendingIntent(): PendingIntent {
-        val intent = Intent(this, ClipboardMonitorService::class.java).apply {
-            action = ACTION_MANUAL_SYNC
-        }
-        return PendingIntent.getService(
-            this, 1, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
-    
-    private suspend fun syncClipboardToCloud(content: String, contentType: String, isManual: Boolean = false) {
+    /**
+     * Check clipboard and sync if changed.
+     * Used for FOREGROUND_SYNC mode and manual sync.
+     */
+    private suspend fun checkAndSyncClipboard() {
         try {
-            if (!ClipboardUtils.shouldSyncContent(content)) {
-                Log.d(TAG, "Content filtered out from sync")
+            val clipData = clipboardManager.primaryClip
+            if (clipData == null || clipData.itemCount == 0) {
+                Log.d(TAG, "No clipboard data")
                 return
             }
             
-            val result = clipboardSyncManager.syncLocalClipboard(content, contentType)
-            if (result.isSuccess) {
-                val message = if (isManual) "Manual sync completed" else "Clipboard synced"
-                updateNotification(message)
-                Log.d(TAG, "Successfully synced clipboard content")
-                
-                // Reset notification after a delay
-                delay(2000)
-                updateNotification(getInitialNotificationText())
-            } else {
-                val errorMessage = if (isManual) "Manual sync failed" else "Sync failed - retrying..."
-                updateNotification(errorMessage)
-                Log.w(TAG, "Failed to sync clipboard: ${result.exceptionOrNull()?.message}")
+            val content = ClipboardUtils.extractTextContent(clipData)
+            if (content.isNullOrBlank()) {
+                return
             }
+            
+            val contentHash = DeviceUtils.generateContentHash(content)
+            
+            if (contentHash != lastClipboardHash) {
+                lastClipboardHash = contentHash
+                Log.i(TAG, "Clipboard changed, syncing: ${content.take(50)}...")
+                
+                if (ClipboardUtils.shouldSyncContent(content)) {
+                    val result = clipboardSyncManager.syncLocalClipboard(content, "text")
+                    if (result.isSuccess) {
+                        Log.d(TAG, "Clipboard synced successfully")
+                        updateNotification("已同步")
+                        delay(2000)
+                        updateNotificationForMethod(currentMonitoringMethod)
+                    } else {
+                        Log.w(TAG, "Sync failed: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+            } else {
+                Log.d(TAG, "Clipboard unchanged")
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Clipboard access denied: ${e.message}")
         } catch (e: Exception) {
-            val errorMessage = if (isManual) "Manual sync error" else "Sync error - retrying..."
-            updateNotification(errorMessage)
-            Log.e(TAG, "Error syncing clipboard to cloud", e)
+            Log.e(TAG, "Error checking clipboard", e)
         }
     }
     
@@ -421,7 +453,9 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     }
     
     private fun createNotification(contentText: String): Notification {
-        val mainIntent = Intent(this, com.siw.clipboardsync.MainActivity::class.java)
+        val mainIntent = Intent(this, com.siw.clipboardsync.MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
         val mainPendingIntent = PendingIntent.getActivity(
             this, 0, mainIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -442,12 +476,10 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
             .setOngoing(true)
             .setContentIntent(mainPendingIntent)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(android.R.drawable.ic_media_pause, "Stop", stopPendingIntent)
+            .addAction(android.R.drawable.ic_media_pause, "停止", stopPendingIntent)
         
-        // Always add manual sync action for Android 10+ or when showing background limitation
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q || isShowingBackgroundLimitationNotification) {
-            builder.addAction(android.R.drawable.ic_menu_rotate, "Manual Sync", createManualSyncPendingIntent())
-        }
+        // Note: "立即同步" button removed - manual sync from notification doesn't work reliably on Android 10+
+        // Users can sync by switching to the app instead
         
         return builder.build()
     }
@@ -458,80 +490,13 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
         notificationManager.notify(NOTIFICATION_ID, notification)
     }
     
-    // Advanced Monitoring Integration
-    
-    /**
-     * Initialize advanced monitoring system
-     */
-    private suspend fun initializeAdvancedMonitoring() {
-        try {
-            if (!useAdvancedMonitoring) {
-                Log.d(TAG, "Advanced monitoring disabled, using legacy polling")
-                return
-            }
-            
-            Log.d(TAG, "Checking advanced monitoring availability")
-            
-            if (clipboardSyncManager.isAdvancedMonitoringAvailable()) {
-                Log.i(TAG, "Advanced monitoring available, attempting to enable")
-                
-                val success = clipboardSyncManager.enableAdvancedMonitoring()
-                if (success) {
-                    advancedMonitoringEnabled = true
-                    fallbackToPolling = false
-                    Log.i(TAG, "Advanced monitoring enabled successfully")
-                    
-                    // Update notification to reflect advanced monitoring
-                    updateNotification("Advanced monitoring active")
-                    
-                    // Observe monitoring method changes
-                    serviceScope.launch {
-                        clipboardSyncManager.monitoringMethod.collect { method ->
-                            method?.let {
-                                Log.d(TAG, "Advanced monitoring method: ${it.name}")
-                                updateNotificationForAdvancedMonitoring(it.name)
-                            }
-                        }
-                    }
-                } else {
-                    Log.w(TAG, "Failed to enable advanced monitoring, falling back to polling")
-                    fallbackToPolling = true
-                }
-            } else {
-                Log.i(TAG, "Advanced monitoring not available on this device, using polling")
-                fallbackToPolling = true
-            }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initializing advanced monitoring", e)
-            fallbackToPolling = true
+    private fun updateNotificationForMethod(method: MonitoringMethod?) {
+        val text = when (method) {
+            MonitoringMethod.XPOSED_HOOKS -> "Xposed监控 (后台同步)"
+            MonitoringMethod.SHIZUKU -> "Shizuku监控 (后台同步)"
+            MonitoringMethod.FOREGROUND_SYNC -> "前台同步模式 (切换到app时同步)"
+            else -> "监控中..."
         }
-    }
-    
-    /**
-     * Update notification to show advanced monitoring status
-     */
-    private fun updateNotificationForAdvancedMonitoring(methodName: String) {
-        val notificationText = when (methodName) {
-            "SYSTEM_HOOKS" -> "System-level monitoring active"
-            "XPOSED_HOOKS" -> "Xposed framework monitoring active"
-            "READ_LOGS" -> "Logcat monitoring active"
-            "ACCESSIBILITY_SERVICE" -> "Accessibility monitoring active"
-            "FOREGROUND_SERVICE" -> "Foreground service monitoring active"
-            "POLLING_FALLBACK" -> "Polling fallback monitoring active"
-            else -> "Advanced monitoring active"
-        }
-        
-        serviceScope.launch {
-            delay(1000) // Brief delay to avoid notification spam
-            updateNotification(notificationText)
-        }
-    }
-    
-    /**
-     * Check if we should use legacy polling instead of advanced monitoring
-     */
-    private fun shouldUseLegacyPolling(): Boolean {
-        return !useAdvancedMonitoring || !advancedMonitoringEnabled || fallbackToPolling
+        updateNotification(text)
     }
 }

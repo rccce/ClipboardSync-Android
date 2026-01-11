@@ -212,6 +212,8 @@ class MonitoringMigrationManager @Inject constructor(
     
     /**
      * Get the preferred monitoring method after migration
+     * 
+     * Simplified model: XPOSED_HOOKS, SHIZUKU, FOREGROUND_SYNC
      */
     fun getPreferredMethodAfterMigration(): MonitoringMethod? {
         if (!isMigrationCompleted()) {
@@ -220,7 +222,7 @@ class MonitoringMigrationManager @Inject constructor(
         
         val preferLegacy = prefs.getBoolean("prefer_legacy_polling", false)
         if (preferLegacy) {
-            return MonitoringMethod.POLLING_FALLBACK
+            return MonitoringMethod.FOREGROUND_SYNC // Legacy polling replaced by foreground sync
         }
         
         // Return the stored preferred method or null for auto-selection

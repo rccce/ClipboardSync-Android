@@ -47,10 +47,15 @@ class ClipboardSyncManager @Inject constructor(
     private val _isMonitoringActive = MutableStateFlow(false)
     val isMonitoringActive: StateFlow<Boolean> = _isMonitoringActive.asStateFlow()
     
-    // Deduplication mechanism to prevent sync loops
+    // Deduplication mechanism to prevent sync loops and duplicate uploads
     private val recentlySyncedContent = mutableSetOf<String>()
     private val syncedContentTimestamps = mutableMapOf<String, Long>()
     private val SYNC_DEDUPLICATION_WINDOW_MS = 5000L // 5 seconds
+    
+    // Track last synced content to prevent duplicate uploads from monitors
+    private var lastSyncedContentHash: String? = null
+    private var lastSyncedTimestamp: Long = 0L
+    private val DUPLICATE_SYNC_THRESHOLD_MS = 2000L // 2 seconds threshold for duplicate detection
     
     // State flows
     private val _syncStatus = MutableStateFlow(SyncStatus.DISCONNECTED)
@@ -388,7 +393,8 @@ class ClipboardSyncManager @Inject constructor(
             webSocketClient.sendClipboardSync(clipboardItem)
             Log.d(TAG, "Sent clipboard sync via WebSocket only")
             
-            _lastSyncedItem.value = clipboardItem
+            // Don't set _lastSyncedItem here - this is outgoing sync, not incoming
+            // _lastSyncedItem should only be set for incoming updates from other devices
             _syncStatus.value = SyncStatus.CONNECTED
             
             Result.success(clipboardItem)
@@ -412,7 +418,8 @@ class ClipboardSyncManager @Inject constructor(
                 val clipboardItem = result.getOrNull()!!
                 Log.d(TAG, "Sent clipboard sync via HTTP only")
                 
-                _lastSyncedItem.value = clipboardItem
+                // Don't set _lastSyncedItem here - this is outgoing sync, not incoming
+                // _lastSyncedItem should only be set for incoming updates from other devices
                 _syncStatus.value = SyncStatus.CONNECTED
                 
                 Result.success(clipboardItem)
@@ -754,6 +761,23 @@ class ClipboardSyncManager @Inject constructor(
             if (!ClipboardUtils.shouldSyncContent(contentString)) {
                 Log.d(TAG, "Content filtered out from sync by advanced monitoring")
                 return
+            }
+            
+            // Deduplication check: prevent duplicate syncs of the same content
+            val contentHash = DeviceUtils.generateContentHash(contentString)
+            val currentTime = System.currentTimeMillis()
+            
+            synchronized(this) {
+                if (contentHash == lastSyncedContentHash && 
+                    currentTime - lastSyncedTimestamp < DUPLICATE_SYNC_THRESHOLD_MS) {
+                    Log.d(TAG, "Duplicate content detected within ${DUPLICATE_SYNC_THRESHOLD_MS}ms, skipping sync")
+                    Log.i(TAG, "=== ADVANCED MONITORING CLIPBOARD CHANGE END (SKIPPED DUPLICATE) ===")
+                    return
+                }
+                
+                // Update last synced content tracking
+                lastSyncedContentHash = contentHash
+                lastSyncedTimestamp = currentTime
             }
             
             // Sync the content

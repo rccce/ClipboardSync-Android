@@ -30,7 +30,7 @@ class SystemLevelClipboardMonitor @Inject constructor(
     private var isMonitoring = false
     private var clipboardListener: ClipboardListener? = null
     private var monitoringJob: Job? = null
-    private var currentMethod: MonitoringMethod = MonitoringMethod.SYSTEM_HOOKS
+    private var currentMethod: MonitoringMethod = MonitoringMethod.XPOSED_HOOKS
     
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
@@ -110,9 +110,19 @@ class SystemLevelClipboardMonitor @Inject constructor(
             monitoringJob = null
             
             when (currentMethod) {
-                MonitoringMethod.SYSTEM_HOOKS -> nativeHookManager.cleanup()
-                MonitoringMethod.XPOSED_HOOKS -> xposedHookManager.unhookClipboardService()
-                else -> Log.w(TAG, "Unknown monitoring method: $currentMethod")
+                MonitoringMethod.XPOSED_HOOKS -> {
+                    // Try native hooks first, then Xposed cleanup
+                    nativeHookManager.cleanup()
+                    xposedHookManager.unhookClipboardService()
+                }
+                MonitoringMethod.SHIZUKU -> {
+                    // Shizuku cleanup handled elsewhere
+                    Log.d(TAG, "Shizuku cleanup not needed in SystemLevelClipboardMonitor")
+                }
+                MonitoringMethod.FOREGROUND_SYNC -> {
+                    // Foreground sync cleanup handled elsewhere
+                    Log.d(TAG, "Foreground sync cleanup not needed in SystemLevelClipboardMonitor")
+                }
             }
             
             isMonitoring = false
@@ -135,9 +145,24 @@ class SystemLevelClipboardMonitor @Inject constructor(
     
     /**
      * Starts native hook-based monitoring.
+     * 
+     * NOTE: When Xposed mode is active, we should NOT start native hook monitoring
+     * because StaticClipboardReceiver already handles Xposed broadcasts.
+     * Starting both would cause duplicate clipboard events.
      */
     private suspend fun startNativeHookMonitoring(): Boolean {
         return try {
+            // Check if Xposed framework is available - if so, skip native monitoring
+            // because StaticClipboardReceiver handles Xposed broadcasts
+            val rootCapabilities = rootDetectionService.getRootCapabilities()
+            if (rootCapabilities.hasXposedFramework) {
+                Log.i(TAG, "Xposed framework detected - skipping native hook monitoring")
+                Log.i(TAG, "StaticClipboardReceiver will handle Xposed broadcasts instead")
+                // Return true because Xposed mode is active and working via StaticClipboardReceiver
+                currentMethod = MonitoringMethod.XPOSED_HOOKS
+                return true
+            }
+            
             // Initialize native hooks first
             if (!nativeHookManager.initialize()) {
                 Log.e(TAG, "Failed to initialize native hooks")
@@ -165,7 +190,7 @@ class SystemLevelClipboardMonitor @Inject constructor(
                 return false
             }
             
-            currentMethod = MonitoringMethod.SYSTEM_HOOKS
+            currentMethod = MonitoringMethod.XPOSED_HOOKS
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start native hook monitoring", e)
@@ -178,15 +203,26 @@ class SystemLevelClipboardMonitor @Inject constructor(
     
     /**
      * Starts Xposed framework-based monitoring.
+     * 
+     * NOTE: For Xposed/LSPosed, the actual clipboard monitoring is done by:
+     * 1. The Xposed module hooks System Framework
+     * 2. The module sends broadcasts when clipboard changes
+     * 3. StaticClipboardReceiver (registered in AndroidManifest) receives broadcasts
+     * 
+     * This method just marks the hook as active - StaticClipboardReceiver handles the actual events.
      */
     private suspend fun startXposedHookMonitoring(): Boolean {
         return try {
+            // For Xposed mode, we don't need to register a callback here
+            // because StaticClipboardReceiver handles all Xposed broadcasts
+            // and delegates to ClipboardSyncManager for deduplication and syncing
             xposedHookManager.hookClipboardService { content ->
-                coroutineScope.launch {
-                    handleClipboardChange(content)
-                }
+                // This callback is not used for LSPosed/EdXposed
+                // StaticClipboardReceiver handles broadcasts directly
+                Log.d(TAG, "Xposed callback received (should not happen with LSPosed)")
             }
             currentMethod = MonitoringMethod.XPOSED_HOOKS
+            Log.i(TAG, "Xposed hook monitoring activated - StaticClipboardReceiver will handle broadcasts")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start Xposed hook monitoring", e)
@@ -204,10 +240,23 @@ class SystemLevelClipboardMonitor @Inject constructor(
         try {
             val currentTime = System.currentTimeMillis()
             
+            // Get last change timestamp for debounce check
+            val lastTimestamp = if (timingOptimizer is AdaptiveTimingOptimizer) {
+                timingOptimizer.getLastChangeTimestamp()
+            } else {
+                0L
+            }
+            
             // Apply debouncing to prevent rapid-fire events
-            if (timingOptimizer.shouldDebounce(currentTime)) {
-                Log.d(TAG, "Clipboard change debounced")
+            // Pass the last timestamp, not current time
+            if (timingOptimizer.shouldDebounce(lastTimestamp)) {
+                Log.d(TAG, "Clipboard change debounced (last change was ${currentTime - lastTimestamp}ms ago)")
                 return
+            }
+            
+            // Update timing optimizer state BEFORE processing to prevent duplicates
+            if (timingOptimizer is AdaptiveTimingOptimizer) {
+                timingOptimizer.updateLastChangeTimestamp(currentTime)
             }
             
             // Apply optimal read delay
@@ -216,9 +265,8 @@ class SystemLevelClipboardMonitor @Inject constructor(
                 delay(readDelay)
             }
             
-            // Update timing optimizer state
+            // Record success
             if (timingOptimizer is AdaptiveTimingOptimizer) {
-                timingOptimizer.updateLastChangeTimestamp(currentTime)
                 timingOptimizer.recordSuccess()
             }
             

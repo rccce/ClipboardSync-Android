@@ -2,21 +2,23 @@ package com.siw.clipboardsync.monitor.model
 
 /**
  * Configuration class for clipboard monitoring preferences and settings.
+ * 
+ * Simplified monitoring model (mutually exclusive):
+ * - XPOSED_HOOKS: Full background sync (highest priority)
+ * - SHIZUKU: Full background sync without root
+ * - FOREGROUND_SYNC: Sync when app comes to foreground (fallback)
  */
 data class MonitoringConfig(
     val enableAdvancedMonitoring: Boolean = true,
     val preferredMethod: MonitoringMethod? = null,
-    val enableSystemHooks: Boolean = true,
     val enableXposedHooks: Boolean = true,
-    val enableAccessibilityService: Boolean = true,
-    val enableForegroundService: Boolean = true,
-    val enablePollingFallback: Boolean = true,
+    val enableShizuku: Boolean = true,
+    val enableForegroundSync: Boolean = true,
     val autoFallback: Boolean = true,
     val fallbackRetryDelayMs: Long = 2000L,
     val maxFallbackAttempts: Int = 3,
     val enableNotifications: Boolean = true,
-    val enableErrorRecovery: Boolean = true,
-    val migrationFromLegacyPolling: Boolean = true
+    val enableErrorRecovery: Boolean = true
 ) {
     
     /**
@@ -25,20 +27,14 @@ data class MonitoringConfig(
     fun getEnabledMethods(): List<MonitoringMethod> {
         val enabledMethods = mutableListOf<MonitoringMethod>()
         
-        if (enableSystemHooks) {
-            enabledMethods.add(MonitoringMethod.SYSTEM_HOOKS)
-        }
         if (enableXposedHooks) {
             enabledMethods.add(MonitoringMethod.XPOSED_HOOKS)
         }
-        if (enableAccessibilityService) {
-            enabledMethods.add(MonitoringMethod.ACCESSIBILITY_SERVICE)
+        if (enableShizuku) {
+            enabledMethods.add(MonitoringMethod.SHIZUKU)
         }
-        if (enableForegroundService) {
-            enabledMethods.add(MonitoringMethod.FOREGROUND_SERVICE)
-        }
-        if (enablePollingFallback) {
-            enabledMethods.add(MonitoringMethod.POLLING_FALLBACK)
+        if (enableForegroundSync) {
+            enabledMethods.add(MonitoringMethod.FOREGROUND_SYNC)
         }
         
         return enabledMethods
@@ -49,13 +45,9 @@ data class MonitoringConfig(
      */
     fun isMethodEnabled(method: MonitoringMethod): Boolean {
         return when (method) {
-            MonitoringMethod.SYSTEM_HOOKS -> enableSystemHooks
             MonitoringMethod.XPOSED_HOOKS -> enableXposedHooks
-            MonitoringMethod.READ_LOGS -> true // READ_LOGS is always enabled if available
-            MonitoringMethod.SHIZUKU -> true // Shizuku is always enabled if available
-            MonitoringMethod.ACCESSIBILITY_SERVICE -> enableAccessibilityService
-            MonitoringMethod.FOREGROUND_SERVICE -> enableForegroundService
-            MonitoringMethod.POLLING_FALLBACK -> enablePollingFallback
+            MonitoringMethod.SHIZUKU -> enableShizuku
+            MonitoringMethod.FOREGROUND_SYNC -> enableForegroundSync
         }
     }
     
@@ -69,32 +61,28 @@ data class MonitoringConfig(
          * Conservative configuration for devices with limited capabilities
          */
         fun conservative(): MonitoringConfig = MonitoringConfig(
-            enableSystemHooks = false,
             enableXposedHooks = false,
-            preferredMethod = MonitoringMethod.ACCESSIBILITY_SERVICE,
+            preferredMethod = MonitoringMethod.FOREGROUND_SYNC,
             maxFallbackAttempts = 2
         )
         
         /**
-         * Aggressive configuration for rooted devices
+         * Aggressive configuration for rooted devices with Xposed
          */
         fun aggressive(): MonitoringConfig = MonitoringConfig(
-            preferredMethod = MonitoringMethod.SYSTEM_HOOKS,
+            preferredMethod = MonitoringMethod.XPOSED_HOOKS,
             fallbackRetryDelayMs = 1000L,
             maxFallbackAttempts = 5
         )
         
         /**
-         * Legacy polling only configuration
+         * Foreground sync only configuration (for non-root/non-shizuku devices)
          */
-        fun legacyOnly(): MonitoringConfig = MonitoringConfig(
+        fun foregroundOnly(): MonitoringConfig = MonitoringConfig(
             enableAdvancedMonitoring = false,
-            enableSystemHooks = false,
             enableXposedHooks = false,
-            enableAccessibilityService = false,
-            enableForegroundService = false,
-            enablePollingFallback = true,
-            migrationFromLegacyPolling = false
+            enableShizuku = false,
+            enableForegroundSync = true
         )
     }
 }

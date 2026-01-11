@@ -131,8 +131,6 @@ class RootDetectionService @Inject constructor(
         // Test specific capabilities
         val canExecuteRootCommands = isRootAccessible && testRootCommandExecution()
         val canAccessClipboardService = isRootAccessible && testClipboardServiceAccess()
-        val canReadSystemLogs = checkReadLogsCapability()
-        val hasReadLogsPermission = checkReadLogsPermission()
         
         RootCapabilities(
             hasSystemHooks = checkSystemHookAccess(),
@@ -150,9 +148,7 @@ class RootDetectionService @Inject constructor(
             aPatchVersion = aPatchInfo["version"] as? String,
             // Detailed capabilities
             canExecuteRootCommands = canExecuteRootCommands,
-            canAccessClipboardService = canAccessClipboardService,
-            canReadSystemLogs = canReadSystemLogs,
-            hasReadLogsPermission = hasReadLogsPermission
+            canAccessClipboardService = canAccessClipboardService
         )
     }
     
@@ -277,102 +273,47 @@ class RootDetectionService @Inject constructor(
     }
     
     /**
-     * Detects if Xposed or LSPosed framework is available AND our app is actually hooked.
+     * Detects if Xposed or LSPosed framework is available AND ACTIVE for clipboard monitoring.
      * 
-     * IMPORTANT: Just detecting that LSPosed is installed is NOT enough for clipboard monitoring.
-     * We need to verify that our app is actually being hooked by the Xposed module.
+     * For clipboard sync, the Xposed module hooks the SYSTEM FRAMEWORK (not our app),
+     * so we check if the framework is installed AND actually running.
      * 
-     * This method returns true ONLY if:
-     * 1. Xposed/LSPosed framework is installed AND
-     * 2. Our app is actually running in an Xposed environment (being hooked)
+     * IMPORTANT: Just having LSPosed installed is NOT enough - the module must be:
+     * 1. Enabled in LSPosed Manager
+     * 2. Device must be rebooted after enabling
+     * 3. The framework must be actively running
      */
     private fun checkXposedFramework(): Boolean {
-        // First, check if we're actually running in an Xposed environment
-        // This is the most reliable indicator that our app is being hooked
-        
-        // Method 1: Check system properties set by Xposed when hooking our app
-        try {
-            val xposedBridgeVersion = System.getProperty("xposed.bridge.version")
-            if (xposedBridgeVersion != null) {
-                Log.d(TAG, "Xposed bridge version detected: $xposedBridgeVersion - app is hooked")
-                return true
-            }
-            
-            val lsposedBridgeVersion = System.getProperty("lsposed.bridge.version")
-            if (lsposedBridgeVersion != null) {
-                Log.d(TAG, "LSPosed bridge version detected: $lsposedBridgeVersion - app is hooked")
-                return true
-            }
-        } catch (e: Exception) {
-            // Properties not available
+        // First check if any Xposed framework is installed
+        val isInstalled = isXposedFrameworkInstalled()
+        if (!isInstalled) {
+            Log.d(TAG, "No Xposed/LSPosed framework installed")
+            return false
         }
         
-        // Method 2: Check if XposedBridge class is loaded in our process
-        // This only works if our app is actually being hooked
-        try {
-            Class.forName("de.robv.android.xposed.XposedBridge")
-            Log.d(TAG, "XposedBridge class detected in our process - app is hooked")
-            return true
-        } catch (e: ClassNotFoundException) {
-            // Not loaded - our app is not being hooked by traditional Xposed
+        // CRITICAL: Check if Xposed is actually ACTIVE, not just installed
+        val isActive = isXposedFrameworkActive()
+        if (!isActive) {
+            Log.w(TAG, "Xposed/LSPosed framework installed but NOT ACTIVE")
+            Log.w(TAG, "Module may be disabled or device needs reboot after enabling")
+            return false
         }
         
-        // Method 3: Check for LSPosed API class
-        try {
-            Class.forName("io.github.libxposed.api.XposedInterface")
-            Log.d(TAG, "LSPosed API class detected in our process - app is hooked")
-            return true
-        } catch (e: ClassNotFoundException) {
-            // Not loaded - our app is not being hooked by LSPosed
-        }
-        
-        // Method 4: Check for our custom hook indicator
-        try {
-            val hookIndicator = System.getProperty("clipboard.sync.hooked")
-            if (hookIndicator == "true") {
-                Log.d(TAG, "Custom hook indicator found - app is hooked")
-                return true
-            }
-        } catch (e: Exception) {
-            // Property not available
-        }
-        
-        // If we reach here, Xposed framework might be installed but our app is NOT being hooked
-        // Log this for debugging purposes
-        val frameworkInstalled = isXposedFrameworkInstalled()
-        if (frameworkInstalled) {
-            Log.w(TAG, "Xposed/LSPosed framework is INSTALLED but our app is NOT being hooked. " +
-                    "Make sure the clipboard hook module is enabled in LSPosed Manager " +
-                    "and our app (com.siw.clipboardsync) is in the module's scope.")
-        } else {
-            Log.d(TAG, "No Xposed/LSPosed framework detected")
-        }
-        
-        return false
+        Log.i(TAG, "Xposed/LSPosed framework installed and ACTIVE")
+        return true
     }
     
     /**
-     * Checks if Xposed/LSPosed framework is installed (but not necessarily hooking our app).
-     * This is a separate check from checkXposedFramework() which verifies actual hooking.
+     * Checks if any Xposed framework is installed (but may not be active)
      */
     private fun isXposedFrameworkInstalled(): Boolean {
-        // Check for LSPosed manager app
+        // Method 1: Check if LSPosed manager is installed
         if (isPackageInstalled("org.lsposed.manager")) {
+            Log.d(TAG, "LSPosed manager detected")
             return true
         }
         
-        // Check for EdXposed manager
-        if (isPackageInstalled("org.meowcat.edxposed.manager") || 
-            isPackageInstalled("com.solohsu.android.edxp.manager")) {
-            return true
-        }
-        
-        // Check for traditional Xposed installer
-        if (isPackageInstalled("de.robv.android.xposed.installer")) {
-            return true
-        }
-        
-        // Check for LSPosed module directories (with root)
+        // Method 2: Check for LSPosed module directories
         val lsposedPaths = arrayOf(
             "/data/adb/lspd",
             "/data/adb/modules/zygisk_lsposed",
@@ -380,10 +321,87 @@ class RootDetectionService @Inject constructor(
         )
         for (path in lsposedPaths) {
             if (java.io.File(path).exists() || checkPathExistsWithRoot(path)) {
+                Log.d(TAG, "LSPosed path detected: $path")
                 return true
             }
         }
         
+        // Method 3: Check for EdXposed manager
+        if (isPackageInstalled("org.meowcat.edxposed.manager") || 
+            isPackageInstalled("com.solohsu.android.edxp.manager")) {
+            Log.d(TAG, "EdXposed manager detected")
+            return true
+        }
+        
+        // Method 4: Check for traditional Xposed installer
+        if (isPackageInstalled("de.robv.android.xposed.installer")) {
+            Log.d(TAG, "Traditional Xposed installer detected")
+            return true
+        }
+        
+        return false
+    }
+    
+    /**
+     * Checks if Xposed framework is actually ACTIVE and running.
+     * This is the key check to prevent false positives when Xposed is installed but disabled.
+     */
+    private fun isXposedFrameworkActive(): Boolean {
+        // Method 1: Check system properties (most reliable indicator of active Xposed)
+        try {
+            val xposedBridgeVersion = System.getProperty("xposed.bridge.version")
+            if (xposedBridgeVersion != null) {
+                Log.d(TAG, "Xposed bridge version detected: $xposedBridgeVersion - framework ACTIVE")
+                return true
+            }
+            
+            val lsposedBridgeVersion = System.getProperty("lsposed.bridge.version")
+            if (lsposedBridgeVersion != null) {
+                Log.d(TAG, "LSPosed bridge version detected: $lsposedBridgeVersion - framework ACTIVE")
+                return true
+            }
+            
+            val lsposedVersion = System.getProperty("lsposed.version")
+            if (lsposedVersion != null) {
+                Log.d(TAG, "LSPosed version detected: $lsposedVersion - framework ACTIVE")
+                return true
+            }
+        } catch (e: Exception) {
+            // Properties not available
+        }
+        
+        // Method 2: Check if we received Xposed broadcasts recently
+        try {
+            val prefs = context.getSharedPreferences("xposed_status", Context.MODE_PRIVATE)
+            val lastBroadcastTime = prefs.getLong("last_xposed_broadcast", 0)
+            val timeSinceLastBroadcast = System.currentTimeMillis() - lastBroadcastTime
+            // If we received a broadcast in the last 24 hours, Xposed is likely active
+            if (lastBroadcastTime > 0 && timeSinceLastBroadcast < 24 * 60 * 60 * 1000) {
+                Log.d(TAG, "Xposed broadcast received ${timeSinceLastBroadcast / 1000}s ago - framework ACTIVE")
+                return true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking Xposed broadcast history", e)
+        }
+        
+        // Method 3: Check for Xposed classes in our process (if we're hooked)
+        try {
+            Class.forName("de.robv.android.xposed.XposedBridge")
+            Log.d(TAG, "XposedBridge class found - framework ACTIVE")
+            return true
+        } catch (e: ClassNotFoundException) {
+            // Not hooked
+        }
+        
+        try {
+            Class.forName("io.github.libxposed.api.XposedInterface")
+            Log.d(TAG, "LSPosed API class found - framework ACTIVE")
+            return true
+        } catch (e: ClassNotFoundException) {
+            // Not hooked
+        }
+        
+        Log.d(TAG, "No evidence of active Xposed framework")
         return false
     }
     
@@ -692,44 +710,6 @@ class RootDetectionService @Inject constructor(
             exitCode2 == 0
         } catch (e: Exception) {
             Log.w(TAG, "Clipboard service access test failed", e)
-            false
-        }
-    }
-    
-    /**
-     * Checks if READ_LOGS permission is granted
-     */
-    private fun checkReadLogsPermission(): Boolean {
-        return try {
-            ContextCompat.checkSelfPermission(
-                context, 
-                Manifest.permission.READ_LOGS
-            ) == PackageManager.PERMISSION_GRANTED
-        } catch (e: Exception) {
-            Log.w(TAG, "Error checking READ_LOGS permission", e)
-            false
-        }
-    }
-    
-    /**
-     * Checks if we can actually read system logs
-     */
-    private suspend fun checkReadLogsCapability(): Boolean = withContext(Dispatchers.IO) {
-        return@withContext try {
-            // First check if permission is granted
-            if (!checkReadLogsPermission()) {
-                return@withContext false
-            }
-            
-            // Try to read logcat
-            val process = Runtime.getRuntime().exec("logcat -d -t 1")
-            val exitCode = process.waitFor()
-            val output = process.inputStream.bufferedReader().readText()
-            process.destroy()
-            
-            exitCode == 0 && output.isNotEmpty()
-        } catch (e: Exception) {
-            Log.w(TAG, "Read logs capability test failed", e)
             false
         }
     }

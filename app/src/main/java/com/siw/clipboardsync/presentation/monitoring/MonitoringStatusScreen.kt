@@ -522,25 +522,17 @@ fun LatencyCard(
 // Helper functions
 private fun getStatusMethodDisplayName(method: MonitoringMethod): String {
     return when (method) {
-        MonitoringMethod.SYSTEM_HOOKS -> "系统钩子 (Root)"
-        MonitoringMethod.XPOSED_HOOKS -> "Xposed 框架"
-        MonitoringMethod.READ_LOGS -> "日志读取"
-        MonitoringMethod.SHIZUKU -> "Shizuku"
-        MonitoringMethod.ACCESSIBILITY_SERVICE -> "无障碍服务"
-        MonitoringMethod.FOREGROUND_SERVICE -> "前台服务"
-        MonitoringMethod.POLLING_FALLBACK -> "轮询模式"
+        MonitoringMethod.XPOSED_HOOKS -> "Xposed 框架 (后台同步)"
+        MonitoringMethod.SHIZUKU -> "Shizuku (后台同步)"
+        MonitoringMethod.FOREGROUND_SYNC -> "前台同步"
     }
 }
 
 private fun getMethodIcon(method: MonitoringMethod): ImageVector {
     return when (method) {
-        MonitoringMethod.SYSTEM_HOOKS -> Icons.Default.Lock
         MonitoringMethod.XPOSED_HOOKS -> Icons.Default.Build
-        MonitoringMethod.READ_LOGS -> Icons.Default.List
         MonitoringMethod.SHIZUKU -> Icons.Default.Settings
-        MonitoringMethod.ACCESSIBILITY_SERVICE -> Icons.Default.Person
-        MonitoringMethod.FOREGROUND_SERVICE -> Icons.Default.Notifications
-        MonitoringMethod.POLLING_FALLBACK -> Icons.Default.Refresh
+        MonitoringMethod.FOREGROUND_SYNC -> Icons.Default.Refresh
     }
 }
 

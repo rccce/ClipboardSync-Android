@@ -2,14 +2,11 @@ package com.siw.clipboardsync.di
 
 import android.content.ClipboardManager
 import android.content.Context
-import com.siw.clipboardsync.monitor.AccessibilityClipboardMonitor
 import com.siw.clipboardsync.monitor.AdaptiveTimingOptimizer
 import com.siw.clipboardsync.monitor.BatteryOptimizer
 import com.siw.clipboardsync.monitor.ClipboardMonitorManager
-import com.siw.clipboardsync.monitor.ForegroundServiceClipboardMonitor
 import com.siw.clipboardsync.monitor.MonitoringStrategyFactory
 import com.siw.clipboardsync.monitor.NativeHookManager
-import com.siw.clipboardsync.monitor.PollingClipboardMonitor
 import com.siw.clipboardsync.monitor.SystemLevelClipboardMonitor
 import com.siw.clipboardsync.monitor.TimingOptimizer
 import com.siw.clipboardsync.monitor.XposedHookManager
@@ -29,6 +26,11 @@ import javax.inject.Singleton
 
 /**
  * Hilt module for providing clipboard monitoring dependencies.
+ * 
+ * Simplified monitoring model:
+ * - XPOSED_HOOKS: Full background sync (highest priority)
+ * - SHIZUKU: Full background sync without root
+ * - FOREGROUND_SYNC: Sync when app comes to foreground (fallback)
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -46,7 +48,7 @@ object MonitoringModule {
         return TimingConfig(
             readDelayMs = 100L,
             writeDelayMs = 50L,
-            debounceWindowMs = 200L,
+            debounceWindowMs = 500L,  // Increased from 200ms to prevent duplicate syncs
             retryDelayMs = 1000L,
             maxRetries = 3,
             powerModeMultiplier = 1.5f
@@ -107,28 +109,10 @@ object MonitoringModule {
     
     @Provides
     @Singleton
-    fun provideForegroundServiceClipboardMonitor(
-        @ApplicationContext context: Context,
-        clipboardManager: ClipboardManager
-    ): ForegroundServiceClipboardMonitor {
-        return ForegroundServiceClipboardMonitor(context, clipboardManager)
-    }
-    
-    @Provides
-    @Singleton
     fun provideBatteryOptimizer(
         @ApplicationContext context: Context
     ): BatteryOptimizer {
         return BatteryOptimizer(context)
-    }
-    
-    @Provides
-    @Singleton
-    fun providePollingClipboardMonitor(
-        @ApplicationContext context: Context,
-        timingOptimizer: TimingOptimizer
-    ): PollingClipboardMonitor {
-        return PollingClipboardMonitor(context, timingOptimizer)
     }
     
     @Provides
@@ -174,22 +158,11 @@ object MonitoringModule {
     
     @Provides
     @Singleton
-    fun provideAccessibilityClipboardMonitor(
-        @ApplicationContext context: Context
-    ): AccessibilityClipboardMonitor {
-        return AccessibilityClipboardMonitor(context)
-    }
-    
-    @Provides
-    @Singleton
     fun provideClipboardMonitorManager(
         @ApplicationContext context: Context,
         strategyFactory: MonitoringStrategyFactory,
         errorHandler: ClipboardErrorHandler,
         systemLevelMonitor: SystemLevelClipboardMonitor,
-        accessibilityMonitor: AccessibilityClipboardMonitor,
-        foregroundServiceMonitor: ForegroundServiceClipboardMonitor,
-        pollingMonitor: PollingClipboardMonitor,
         monitoringConfig: MonitoringConfig
     ): ClipboardMonitorManager {
         return ClipboardMonitorManager(
@@ -197,9 +170,6 @@ object MonitoringModule {
             strategyFactory = strategyFactory,
             errorHandler = errorHandler,
             systemLevelMonitor = systemLevelMonitor,
-            accessibilityMonitor = accessibilityMonitor,
-            foregroundServiceMonitor = foregroundServiceMonitor,
-            pollingMonitor = pollingMonitor,
             monitoringConfig = monitoringConfig
         )
     }
