@@ -74,8 +74,8 @@ app/src/main/java/com/siw/clipboardsync/
 
 4. **Configure backend endpoints** (Optional)
    - Development: `http://localhost:8080`
-   - Production: `https://clip.siw.me`
-   - WebSocket: `wss://clip.siw.me/ws/sync`
+   - Production: `https://clip.imiss.me`
+   - WebSocket: `wss://clip.imiss.me/ws/sync`
 
 5. **Run the app**
    - Connect an Android device or start an emulator
@@ -116,8 +116,8 @@ app/src/main/java/com/siw/clipboardsync/
 The app connects to the ClipboardSync backend API. Configure the endpoints in your build configuration:
 
 - **Development**: `http://localhost:8080`
-- **Production**: `https://clip.siw.me`
-- **WebSocket**: `wss://clip.siw.me/ws/sync`
+- **Production**: `https://clip.imiss.me`
+- **WebSocket**: `wss://clip.imiss.me/ws/sync`
 
 ### Permissions
 

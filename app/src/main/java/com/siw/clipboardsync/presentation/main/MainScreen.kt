@@ -18,12 +18,14 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.siw.clipboardsync.data.model.ClipboardItem
 import com.siw.clipboardsync.manager.ClipboardSyncManager
+import com.siw.clipboardsync.presentation.monitoring.MonitoringStatusIndicator
 import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
+    onNavigateToSystemStatus: () -> Unit = {},
     viewModel: MainViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -48,104 +50,138 @@ fun MainScreen(
         viewModel.refreshServiceStatus()
     }
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        // Header
-        Text(
-            text = "ClipboardSync",
-            style = MaterialTheme.typography.headlineLarge,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        
-        // Unified Clipboard Sync Card
-        UnifiedClipboardSyncCard(
-            isServiceRunning = uiState.isServiceRunning,
-            hasPermissions = uiState.hasRequiredPermissions,
-            missingPermissions = uiState.missingPermissions,
-            syncStatus = uiState.syncStatus,
-            autoUpdateEnabled = uiState.autoUpdateClipboard,
-            onToggleWebSocket = viewModel::toggleWebSocketConnection,
-            onToggleAutoUpdate = viewModel::toggleAutoUpdateClipboard,
-            onRequestPermissions = { 
-                permissionLauncher.launch(uiState.missingPermissions.toTypedArray())
-            }
-        )
-        
-        // Incoming Update Notification
-        uiState.lastIncomingUpdate?.let { incomingItem ->
-            Spacer(modifier = Modifier.height(16.dp))
-            IncomingUpdateCard(
-                clipboardItem = incomingItem,
-                onApply = viewModel::applyIncomingUpdate,
-                onDismiss = viewModel::dismissIncomingUpdate
-            )
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // Current Clipboard
-        CurrentClipboardCard(
-            currentClipboard = uiState.currentClipboard,
-            onRefresh = { viewModel.refreshClipboardHistory() }
-        )
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // Clipboard History
-        Text(
-            text = "Recent Clipboard History",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        
-        if (uiState.isLoading) {
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        } else {
-            ClipboardHistoryList(
-                history = uiState.clipboardHistory,
-                onCopyToClipboard = { content -> viewModel.copyToClipboard(content) },
-                onDeleteItem = { itemId -> viewModel.deleteClipboardItem(itemId) }
-            )
-        }
-        
-        // Error message
-        uiState.errorMessage?.let { error ->
-            Spacer(modifier = Modifier.height(16.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                )
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { 
                     Text(
-                        text = error,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.weight(1f)
+                        text = "ClipboardSync",
+                        style = MaterialTheme.typography.headlineMedium
                     )
-                    IconButton(onClick = { viewModel.clearError() }) {
+                },
+                actions = {
+                    IconButton(onClick = onNavigateToSystemStatus) {
                         Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Dismiss",
+                            Icons.Default.Info,
+                            contentDescription = "System Status",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp)
+        ) {
+            // Advanced Monitoring Status
+            MonitoringStatusIndicator(
+                isMonitoring = uiState.isAdvancedMonitoring,
+                currentMethod = uiState.currentMonitoringMethod,
+                hasPermissions = uiState.hasRequiredPermissions,
+                onSettingsClick = {
+                    if (!uiState.isAdvancedMonitoring && uiState.hasRequiredPermissions) {
+                        // If monitoring is inactive but permissions are available, start monitoring
+                        viewModel.startAdvancedMonitoring()
+                    } else {
+                        // Otherwise navigate to system status for detailed view
+                        onNavigateToSystemStatus()
+                    }
+                }
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Unified Clipboard Sync Card
+            UnifiedClipboardSyncCard(
+                isServiceRunning = uiState.isServiceRunning,
+                hasPermissions = uiState.hasRequiredPermissions,
+                missingPermissions = uiState.missingPermissions,
+                syncStatus = uiState.syncStatus,
+                autoUpdateEnabled = uiState.autoUpdateClipboard,
+                onToggleWebSocket = viewModel::toggleWebSocketConnection,
+                onToggleAutoUpdate = viewModel::toggleAutoUpdateClipboard,
+                onRequestPermissions = { 
+                    permissionLauncher.launch(uiState.missingPermissions.toTypedArray())
+                }
+            )
+            
+            // Incoming Update Notification
+            uiState.lastIncomingUpdate?.let { incomingItem ->
+                Spacer(modifier = Modifier.height(16.dp))
+                IncomingUpdateCard(
+                    clipboardItem = incomingItem,
+                    onApply = viewModel::applyIncomingUpdate,
+                    onDismiss = viewModel::dismissIncomingUpdate
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Current Clipboard
+            CurrentClipboardCard(
+                currentClipboard = uiState.currentClipboard,
+                onRefresh = { viewModel.refreshClipboardHistory() }
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Clipboard History
+            Text(
+                text = "Recent Clipboard History",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            
+            if (uiState.isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                ClipboardHistoryList(
+                    history = uiState.clipboardHistory,
+                    onCopyToClipboard = { content -> viewModel.copyToClipboard(content) },
+                    onDeleteItem = { itemId -> viewModel.deleteClipboardItem(itemId) }
+                )
+            }
+            
+            // Error message
+            uiState.errorMessage?.let { error ->
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
                             tint = MaterialTheme.colorScheme.onErrorContainer
                         )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { viewModel.clearError() }) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Dismiss",
+                                tint = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
                     }
                 }
             }
@@ -265,7 +301,7 @@ private fun UnifiedClipboardSyncCard(
             // Auto-update toggle (only show when WebSocket is connected)
             if (syncStatus == ClipboardSyncManager.SyncStatus.CONNECTED && hasPermissions) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Divider(
+                HorizontalDivider(
                     color = when {
                         syncStatus == ClipboardSyncManager.SyncStatus.CONNECTED -> MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)
                         else -> MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.2f)
@@ -439,7 +475,6 @@ private fun formatDate(dateString: String): String {
         dateString.take(16) // Fallback to first 16 characters
     }
 }
-
 
 @Composable
 private fun IncomingUpdateCard(

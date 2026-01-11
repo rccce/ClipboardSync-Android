@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">ClipboardSync</string>
+    <string name="accessibility_service_description">ClipboardSync uses this accessibility service to monitor clipboard changes for synchronization across your devices. This service only monitors clipboard content and does not access other app data or user interactions.</string>
 </resources>

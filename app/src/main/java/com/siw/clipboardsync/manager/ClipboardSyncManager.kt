@@ -5,6 +5,11 @@ import android.util.Log
 import com.siw.clipboardsync.data.model.ClipboardItem
 import com.siw.clipboardsync.data.repository.AuthRepository
 import com.siw.clipboardsync.data.repository.ClipboardRepository
+import com.siw.clipboardsync.monitor.ClipboardListener
+import com.siw.clipboardsync.monitor.ClipboardMonitorManager
+import com.siw.clipboardsync.monitor.model.ClipboardContent
+import com.siw.clipboardsync.monitor.model.ClipboardError
+import com.siw.clipboardsync.monitor.model.MonitoringMethod
 import com.siw.clipboardsync.utils.ClipboardUtils
 import com.siw.clipboardsync.utils.DeviceUtils
 import com.siw.clipboardsync.websocket.WebSocketClient
@@ -19,8 +24,10 @@ class ClipboardSyncManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val webSocketClient: WebSocketClient,
     private val clipboardRepository: ClipboardRepository,
-    private val authRepository: AuthRepository
-) {
+    private val authRepository: AuthRepository,
+    private val clipboardMonitorManager: ClipboardMonitorManager,
+    private val migrationManager: com.siw.clipboardsync.monitor.migration.MonitoringMigrationManager
+) : ClipboardListener {
     
     companion object {
         private const val TAG = "ClipboardSyncManager"
@@ -31,11 +38,24 @@ class ClipboardSyncManager @Inject constructor(
     private var isInitialized = false
     private var currentDeviceId: String? = null
     private var connectionJob: Job? = null
+    private var isAdvancedMonitoringEnabled = false
     
-    // Deduplication mechanism to prevent sync loops
+    // Advanced monitoring state
+    private val _monitoringMethod = MutableStateFlow<MonitoringMethod?>(null)
+    val monitoringMethod: StateFlow<MonitoringMethod?> = _monitoringMethod.asStateFlow()
+    
+    private val _isMonitoringActive = MutableStateFlow(false)
+    val isMonitoringActive: StateFlow<Boolean> = _isMonitoringActive.asStateFlow()
+    
+    // Deduplication mechanism to prevent sync loops and duplicate uploads
     private val recentlySyncedContent = mutableSetOf<String>()
     private val syncedContentTimestamps = mutableMapOf<String, Long>()
     private val SYNC_DEDUPLICATION_WINDOW_MS = 5000L // 5 seconds
+    
+    // Track last synced content to prevent duplicate uploads from monitors
+    private var lastSyncedContentHash: String? = null
+    private var lastSyncedTimestamp: Long = 0L
+    private val DUPLICATE_SYNC_THRESHOLD_MS = 2000L // 2 seconds threshold for duplicate detection
     
     // State flows
     private val _syncStatus = MutableStateFlow(SyncStatus.DISCONNECTED)
@@ -72,6 +92,16 @@ class ClipboardSyncManager @Inject constructor(
                 scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
             }
             
+            // 设置WebSocketClient的tokenProvider，以便重连或连接前获取最新token
+            webSocketClient.setTokenProvider {
+                try {
+                    authRepository.getValidAccessToken()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to fetch latest access token for WebSocket", e)
+                    null
+                }
+            }
+            
             // Start observing connection status immediately
             startObservingConnectionStatus()
             
@@ -92,6 +122,9 @@ class ClipboardSyncManager @Inject constructor(
             } else {
                 Log.w(TAG, "Cannot start WebSocket - missing token or device ID")
             }
+            
+            // Initialize advanced monitoring system
+            initializeAdvancedMonitoring()
             
             isInitialized = true
             Log.d(TAG, "ClipboardSyncManager initialized successfully")
@@ -150,8 +183,6 @@ class ClipboardSyncManager @Inject constructor(
         scope.launch {
             try {
                 Log.d(TAG, "Starting WebSocket connection for device: $deviceId")
-                // Don't manually set CONNECTING status here - let the WebSocket observer handle it
-                // _syncStatus.value = SyncStatus.CONNECTING
                 
                 // Get user ID from auth repository
                 val currentUser = authRepository.getCurrentUser()
@@ -161,8 +192,11 @@ class ClipboardSyncManager @Inject constructor(
                     return@launch
                 }
                 
+                // 确保使用有效的最新token
+                val latestAccess = authRepository.getValidAccessToken() ?: accessToken
+                
                 // Connect to WebSocket - the connection status observer will handle status updates
-                webSocketClient.connect(accessToken, currentUser.id, deviceId)
+                webSocketClient.connect(latestAccess, currentUser.id, deviceId)
                 Log.d(TAG, "WebSocket connect() called, waiting for status updates from observer")
                 
             } catch (e: Exception) {
@@ -359,7 +393,8 @@ class ClipboardSyncManager @Inject constructor(
             webSocketClient.sendClipboardSync(clipboardItem)
             Log.d(TAG, "Sent clipboard sync via WebSocket only")
             
-            _lastSyncedItem.value = clipboardItem
+            // Don't set _lastSyncedItem here - this is outgoing sync, not incoming
+            // _lastSyncedItem should only be set for incoming updates from other devices
             _syncStatus.value = SyncStatus.CONNECTED
             
             Result.success(clipboardItem)
@@ -383,7 +418,8 @@ class ClipboardSyncManager @Inject constructor(
                 val clipboardItem = result.getOrNull()!!
                 Log.d(TAG, "Sent clipboard sync via HTTP only")
                 
-                _lastSyncedItem.value = clipboardItem
+                // Don't set _lastSyncedItem here - this is outgoing sync, not incoming
+                // _lastSyncedItem should only be set for incoming updates from other devices
                 _syncStatus.value = SyncStatus.CONNECTED
                 
                 Result.success(clipboardItem)
@@ -448,6 +484,11 @@ class ClipboardSyncManager @Inject constructor(
         connectionJob?.cancel()
         connectionJob = null
         
+        // Disable advanced monitoring
+        scope.launch {
+            disableAdvancedMonitoring()
+        }
+        
         // Then disconnect WebSocket
         disconnect()
         
@@ -459,6 +500,7 @@ class ClipboardSyncManager @Inject constructor(
         
         // Reset state
         isInitialized = false
+        isAdvancedMonitoringEnabled = false
         
         Log.d(TAG, "ClipboardSyncManager cleanup complete")
     }
@@ -481,6 +523,306 @@ class ClipboardSyncManager @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get access token", e)
             null
+        }
+    }
+    
+    // Advanced Monitoring Integration
+    
+    /**
+     * Initialize the advanced monitoring system
+     */
+    private suspend fun initializeAdvancedMonitoring() {
+        try {
+            Log.d(TAG, "Initializing advanced clipboard monitoring system")
+            
+            // Perform migration from legacy polling if needed
+            if (!migrationManager.isMigrationCompleted()) {
+                Log.i(TAG, "Performing migration from legacy polling to advanced monitoring")
+                val migrationResult = migrationManager.performMigration()
+                Log.i(TAG, "Migration result: ${migrationResult.javaClass.simpleName}")
+            }
+            
+            clipboardMonitorManager.initialize()
+            
+            // Observe monitoring state changes
+            scope.launch {
+                clipboardMonitorManager.currentMethod.collect { method ->
+                    _monitoringMethod.value = method
+                    Log.d(TAG, "Monitoring method changed to: ${method?.name ?: "NONE"}")
+                }
+            }
+            
+            scope.launch {
+                clipboardMonitorManager.isMonitoring.collect { isActive ->
+                    _isMonitoringActive.value = isActive
+                    Log.d(TAG, "Advanced monitoring active: $isActive")
+                }
+            }
+            
+            Log.d(TAG, "Advanced monitoring system initialized successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize advanced monitoring", e)
+        }
+    }
+    
+    /**
+     * Enable advanced clipboard monitoring
+     */
+    suspend fun enableAdvancedMonitoring(): Boolean {
+        return try {
+            if (isAdvancedMonitoringEnabled) {
+                Log.d(TAG, "Advanced monitoring already enabled")
+                return true
+            }
+            
+            Log.i(TAG, "Enabling advanced clipboard monitoring")
+            clipboardMonitorManager.startMonitoring(this)
+            isAdvancedMonitoringEnabled = true
+            
+            Log.i(TAG, "Advanced monitoring enabled successfully")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to enable advanced monitoring", e)
+            false
+        }
+    }
+    
+    /**
+     * Disable advanced clipboard monitoring
+     */
+    suspend fun disableAdvancedMonitoring() {
+        try {
+            if (!isAdvancedMonitoringEnabled) {
+                Log.d(TAG, "Advanced monitoring already disabled")
+                return
+            }
+            
+            Log.i(TAG, "Disabling advanced clipboard monitoring")
+            clipboardMonitorManager.stopMonitoring()
+            isAdvancedMonitoringEnabled = false
+            
+            Log.i(TAG, "Advanced monitoring disabled successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to disable advanced monitoring", e)
+        }
+    }
+    
+    /**
+     * Switch to a specific monitoring method
+     */
+    suspend fun switchMonitoringMethod(method: MonitoringMethod): Boolean {
+        return try {
+            Log.i(TAG, "Switching to monitoring method: ${method.name}")
+            clipboardMonitorManager.switchMonitoringMethod(method)
+            Log.i(TAG, "Successfully switched to monitoring method: ${method.name}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to switch monitoring method to ${method.name}", e)
+            false
+        }
+    }
+    
+    /**
+     * Get current monitoring status
+     */
+    fun getAdvancedMonitoringStatus(): ClipboardMonitorManager.MonitoringStatus {
+        return clipboardMonitorManager.getMonitoringStatus()
+    }
+    
+    /**
+     * Check if advanced monitoring is available.
+     * This is a suspend function that ensures the ClipboardMonitorManager is initialized first.
+     */
+    suspend fun isAdvancedMonitoringAvailable(): Boolean {
+        // Ensure ClipboardMonitorManager is initialized
+        clipboardMonitorManager.initialize()
+        
+        // Wait for fallback chain to be populated (max 5 seconds)
+        var waitCount = 0
+        while (clipboardMonitorManager.getMonitoringStatus().availableStrategies.isEmpty() && waitCount < 50) {
+            kotlinx.coroutines.delay(100)
+            waitCount++
+        }
+        
+        val status = clipboardMonitorManager.getMonitoringStatus()
+        val available = status.availableStrategies.isNotEmpty()
+        Log.d(TAG, "isAdvancedMonitoringAvailable: $available (${status.availableStrategies.size} strategies)")
+        return available
+    }
+    
+    /**
+     * Get detailed diagnostic information for debugging monitoring issues
+     */
+    suspend fun getMonitoringDiagnostics(): Map<String, Any?> {
+        return try {
+            val rootDetectionService = com.siw.clipboardsync.service.RootDetectionService(context)
+            val rootCapabilities = rootDetectionService.getRootCapabilities()
+            val monitoringStatus = clipboardMonitorManager.getMonitoringStatus()
+            
+            mapOf(
+                "isRooted" to rootDetectionService.isRooted(),
+                "rootCapabilities" to mapOf(
+                    "hasSystemHooks" to rootCapabilities.hasSystemHooks,
+                    "hasXposedFramework" to rootCapabilities.hasXposedFramework,
+                    "hasNativeAccess" to rootCapabilities.hasNativeAccess,
+                    "rootMethod" to rootCapabilities.rootMethod.name,
+                    "suBinaryPath" to rootCapabilities.suBinaryPath,
+                    "isRootAccessible" to rootCapabilities.isRootAccessible,
+                    "hasRootAccess" to rootCapabilities.hasRootAccess,
+                    "canUseSystemLevelMonitoring" to rootCapabilities.canUseSystemLevelMonitoring
+                ),
+                "monitoringStatus" to mapOf(
+                    "isMonitoring" to monitoringStatus.isMonitoring,
+                    "currentMethod" to monitoringStatus.currentMethod?.name,
+                    "availableStrategies" to monitoringStatus.availableStrategies.map { 
+                        mapOf(
+                            "method" to it.method.name,
+                            "priority" to it.priority,
+                            "isAvailable" to it.isAvailable,
+                            "capabilities" to it.capabilities.map { cap -> cap.name }
+                        )
+                    },
+                    "fallbackIndex" to monitoringStatus.fallbackIndex
+                ),
+                "advancedMonitoringEnabled" to isAdvancedMonitoringEnabled,
+                "monitoringActive" to _isMonitoringActive.value,
+                "currentMonitoringMethod" to _monitoringMethod.value?.name
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting monitoring diagnostics", e)
+            mapOf(
+                "error" to (e.message ?: "Unknown error"),
+                "exception" to e.javaClass.simpleName
+            )
+        }
+    }
+    
+    /**
+     * Explicitly request root access and reinitialize monitoring if successful
+     */
+    suspend fun requestRootAccessAndReinitialize(): Boolean {
+        return try {
+            Log.i(TAG, "Requesting root access and reinitializing monitoring...")
+            
+            val rootDetectionService = com.siw.clipboardsync.service.RootDetectionService(context)
+            val rootGranted = rootDetectionService.requestRootAccess()
+            
+            if (rootGranted) {
+                Log.i(TAG, "Root access granted! Reinitializing advanced monitoring...")
+                
+                // Disable current monitoring
+                if (isAdvancedMonitoringEnabled) {
+                    disableAdvancedMonitoring()
+                }
+                
+                // Reinitialize the monitoring system
+                clipboardMonitorManager.initialize()
+                
+                // Try to enable advanced monitoring again
+                val success = enableAdvancedMonitoring()
+                if (success) {
+                    Log.i(TAG, "Advanced monitoring successfully enabled with root access!")
+                } else {
+                    Log.w(TAG, "Failed to enable advanced monitoring even with root access")
+                }
+                
+                success
+            } else {
+                Log.w(TAG, "Root access was not granted")
+                false
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error requesting root access and reinitializing", e)
+            false
+        }
+    }
+    
+    // ClipboardListener implementation for advanced monitoring
+    
+    override suspend fun onClipboardChanged(content: ClipboardContent, timestamp: Long) {
+        try {
+            Log.i(TAG, "=== ADVANCED MONITORING CLIPBOARD CHANGE ===")
+            Log.d(TAG, "Content type: ${content.type}, size: ${content.size} bytes, source: ${content.source}")
+            
+            // Convert ClipboardContent to string for sync
+            val contentString = when (content.type) {
+                ClipboardContent.ContentType.TEXT -> String(content.data, Charsets.UTF_8)
+                ClipboardContent.ContentType.HTML -> String(content.data, Charsets.UTF_8)
+                else -> {
+                    Log.d(TAG, "Unsupported content type for sync: ${content.type}")
+                    return
+                }
+            }
+            
+            Log.d(TAG, "Content string: ${contentString.take(100)}...")
+            
+            // Check if content should be synced
+            if (!ClipboardUtils.shouldSyncContent(contentString)) {
+                Log.d(TAG, "Content filtered out from sync by advanced monitoring")
+                return
+            }
+            
+            // Deduplication check: prevent duplicate syncs of the same content
+            val contentHash = DeviceUtils.generateContentHash(contentString)
+            val currentTime = System.currentTimeMillis()
+            
+            synchronized(this) {
+                if (contentHash == lastSyncedContentHash && 
+                    currentTime - lastSyncedTimestamp < DUPLICATE_SYNC_THRESHOLD_MS) {
+                    Log.d(TAG, "Duplicate content detected within ${DUPLICATE_SYNC_THRESHOLD_MS}ms, skipping sync")
+                    Log.i(TAG, "=== ADVANCED MONITORING CLIPBOARD CHANGE END (SKIPPED DUPLICATE) ===")
+                    return
+                }
+                
+                // Update last synced content tracking
+                lastSyncedContentHash = contentHash
+                lastSyncedTimestamp = currentTime
+            }
+            
+            // Sync the content
+            val contentType = when (content.type) {
+                ClipboardContent.ContentType.TEXT -> "text"
+                ClipboardContent.ContentType.HTML -> "html"
+                ClipboardContent.ContentType.IMAGE -> "image"
+                ClipboardContent.ContentType.FILE -> "file"
+                ClipboardContent.ContentType.URI -> "uri"
+                else -> "text"
+            }
+            
+            Log.d(TAG, "Syncing content via advanced monitoring...")
+            val result = syncLocalClipboard(contentString, contentType)
+            if (result.isSuccess) {
+                Log.i(TAG, "Advanced monitoring sync completed successfully")
+            } else {
+                Log.w(TAG, "Advanced monitoring sync failed: ${result.exceptionOrNull()?.message}")
+            }
+            Log.i(TAG, "=== ADVANCED MONITORING CLIPBOARD CHANGE END ===")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling advanced monitoring clipboard change", e)
+        }
+    }
+    
+    override suspend fun onMonitoringError(error: ClipboardError) {
+        Log.w(TAG, "Advanced monitoring error: ${error.javaClass.simpleName}")
+        
+        when (error) {
+            is ClipboardError.RootAccessLost -> {
+                Log.i(TAG, "Root access lost, advanced monitoring will fallback automatically")
+            }
+            is ClipboardError.PermissionDenied -> {
+                Log.w(TAG, "Permission denied for advanced monitoring")
+            }
+            is ClipboardError.AllMonitoringMethodsFailed -> {
+                Log.e(TAG, "All advanced monitoring methods failed, disabling advanced monitoring")
+                scope.launch {
+                    disableAdvancedMonitoring()
+                }
+            }
+            else -> {
+                Log.w(TAG, "Advanced monitoring error: $error")
+            }
         }
     }
 }

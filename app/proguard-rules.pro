@@ -5,17 +5,44 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
-
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Keep debug info for stack traces
+-keepattributes SourceFile,LineNumberTable
 
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Google Crypto Tink library
+-dontwarn com.google.errorprone.annotations.**
+-keep class com.google.errorprone.annotations.** { *; }
+
+# Retrofit and OkHttp
+-dontwarn retrofit2.**
+-keep class retrofit2.** { *; }
+-keepattributes Signature
+-keepattributes Annotation
+-keep class okhttp3.** { *; }
+-dontwarn okhttp3.**
+
+# Gson
+-keepattributes Signature
+-keep class com.google.gson.** { *; }
+-keep class * implements com.google.gson.TypeAdapterFactory
+-keep class * implements com.google.gson.JsonSerializer
+-keep class * implements com.google.gson.JsonDeserializer
+
+# Data models
+-keep class com.siw.clipboardsync.data.model.** { *; }
+
+# Hilt
+-keep class dagger.hilt.** { *; }
+-dontwarn dagger.hilt.**
+
+# Native methods
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
+# Security crypto
+-keep class androidx.security.crypto.** { *; }
+-dontwarn androidx.security.crypto.**
