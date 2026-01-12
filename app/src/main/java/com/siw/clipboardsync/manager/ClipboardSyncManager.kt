@@ -52,7 +52,7 @@ class ClipboardSyncManager @Inject constructor(
     // Deduplication mechanism to prevent sync loops and duplicate uploads
     private val recentlySyncedContent = mutableSetOf<String>()
     private val syncedContentTimestamps = mutableMapOf<String, Long>()
-    private val SYNC_DEDUPLICATION_WINDOW_MS = 5000L // 5 seconds
+    private val SYNC_DEDUPLICATION_WINDOW_MS = 10000L // 10 seconds (increased for Shizuku polling mode)
     
     // Track last synced content to prevent duplicate uploads from monitors
     private var lastSyncedContentHash: String? = null
@@ -257,6 +257,11 @@ class ClipboardSyncManager @Inject constructor(
             
             _syncStatus.value = SyncStatus.SYNCING
             
+            // CRITICAL: Mark content as synced BEFORE setting clipboard
+            // This prevents the Xposed/Root hook from re-syncing the same content
+            // when it detects the clipboard change we're about to make
+            markContentAsSynced(clipboardItem.content)
+            
             // Update local clipboard
             when (clipboardItem.contentType) {
                 "text" -> {
@@ -276,9 +281,6 @@ class ClipboardSyncManager @Inject constructor(
                     handleIncomingFileSync(clipboardItem)
                 }
             }
-            
-            // Mark this content as recently synced to prevent upload loop
-            markContentAsSynced(clipboardItem.content)
             
             _lastSyncedItem.value = clipboardItem
             _syncStatus.value = SyncStatus.CONNECTED
@@ -331,7 +333,7 @@ class ClipboardSyncManager @Inject constructor(
             cleanupOldSyncedContent(currentTime)
         }
         
-        Log.d(TAG, "Marked content as recently synced: ${content.take(50)}...")
+        Log.d(TAG, "Marked content as recently synced (hash=$contentHash): ${content.take(50)}...")
     }
     
     /**
@@ -345,8 +347,13 @@ class ClipboardSyncManager @Inject constructor(
             cleanupOldSyncedContent(currentTime)
             
             val isRecent = recentlySyncedContent.contains(contentHash)
+            val timestamp = syncedContentTimestamps[contentHash]
+            val age = if (timestamp != null) currentTime - timestamp else -1
+            
+            Log.d(TAG, "isRecentlySynced check: hash=$contentHash, found=$isRecent, age=${age}ms, content=${content.take(50)}...")
+            
             if (isRecent) {
-                Log.d(TAG, "Content was recently synced, skipping upload: ${content.take(50)}...")
+                Log.i(TAG, "Content was recently synced from remote device, skipping re-upload")
             }
             return isRecent
         }
@@ -791,11 +798,22 @@ class ClipboardSyncManager @Inject constructor(
                 }
             }
             
-            Log.d(TAG, "Content string: ${contentString.take(100)}...")
+            Log.d(TAG, "Content string (hash=${contentString.hashCode()}): ${contentString.take(100)}...")
             
             // Check if content should be synced
             if (!ClipboardUtils.shouldSyncContent(contentString)) {
                 Log.d(TAG, "Content filtered out from sync by advanced monitoring")
+                return
+            }
+            
+            // CRITICAL: Check if this content was recently synced FROM another device
+            // This prevents the sync loop in Root/Xposed/Shizuku mode where:
+            // 1. Device receives content from server
+            // 2. Sets it to local clipboard
+            // 3. Monitor detects the change and tries to sync it back
+            if (isRecentlySynced(contentString)) {
+                Log.d(TAG, "Content was recently synced from another device, skipping re-upload")
+                Log.i(TAG, "=== ADVANCED MONITORING CLIPBOARD CHANGE END (SKIPPED - FROM REMOTE) ===")
                 return
             }
             

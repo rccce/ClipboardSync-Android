@@ -19,7 +19,9 @@ data class AuthResponse(
     @SerializedName("data")
     val data: AuthData?,
     @SerializedName("message")
-    val message: String? = null
+    val message: String? = null,
+    @SerializedName("error")
+    val error: String? = null
 )
 
 data class AuthData(
@@ -54,4 +56,16 @@ data class RegisterRequest(
 data class RefreshTokenRequest(
     @SerializedName("refresh_token")
     val refreshToken: String
+)
+
+/**
+ * 通用错误响应结构，用于解析 API 错误
+ */
+data class ErrorResponse(
+    @SerializedName("success")
+    val success: Boolean? = null,
+    @SerializedName("error")
+    val error: String? = null,
+    @SerializedName("message")
+    val message: String? = null
 )

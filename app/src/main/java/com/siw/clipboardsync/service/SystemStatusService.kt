@@ -229,14 +229,15 @@ class SystemStatusService @Inject constructor(
      */
     private fun getShizukuStatus(): ShizukuStatus {
         return try {
+            // First check if Shizuku binder is available (works even without Shizuku Manager app)
+            val isRunning = try {
+                Shizuku.pingBinder()
+            } catch (e: Exception) {
+                false
+            }
+            
+            // Check if Shizuku Manager app is installed
             val isInstalled = isShizukuInstalled()
-            val isRunning = if (isInstalled) {
-                try {
-                    Shizuku.pingBinder()
-                } catch (e: Exception) {
-                    false
-                }
-            } else false
             
             val hasPermission = if (isRunning) {
                 try {
@@ -255,7 +256,7 @@ class SystemStatusService @Inject constructor(
             } else -1
             
             ShizukuStatus(
-                isInstalled = isInstalled,
+                isInstalled = isInstalled || isRunning,  // Consider "installed" if running via ADB
                 isRunning = isRunning,
                 hasPermission = hasPermission,
                 version = version
@@ -270,10 +271,25 @@ class SystemStatusService @Inject constructor(
      * Check if Shizuku app is installed
      */
     private fun isShizukuInstalled(): Boolean {
+        // Check for Shizuku Manager app (main package)
+        val shizukuPackages = listOf(
+            "moe.shizuku.privileged.api",  // Shizuku API (may be present when service is running)
+            "moe.shizuku.manager"           // Shizuku Manager app
+        )
+        
+        for (packageName in shizukuPackages) {
+            try {
+                context.packageManager.getPackageInfo(packageName, 0)
+                return true
+            } catch (e: PackageManager.NameNotFoundException) {
+                // Try next package
+            }
+        }
+        
+        // Also check if Shizuku binder is available (service might be running via ADB)
         return try {
-            context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
-            true
-        } catch (e: PackageManager.NameNotFoundException) {
+            Shizuku.pingBinder()
+        } catch (e: Exception) {
             false
         }
     }

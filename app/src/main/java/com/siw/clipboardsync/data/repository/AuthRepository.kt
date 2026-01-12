@@ -38,8 +38,15 @@ class AuthRepository @Inject constructor(
                 
                 Result.success(authData)
             } else {
-                val errorMessage = response.body()?.message ?: "Registration failed"
-                Result.failure(Exception(errorMessage))
+                // 优先从 response body 获取错误信息
+                var errorMessage = response.body()?.error ?: response.body()?.message
+                
+                // 如果 body 为空，尝试从 errorBody 解析
+                if (errorMessage == null) {
+                    errorMessage = parseErrorBody(response.errorBody()?.string())
+                }
+                
+                Result.failure(Exception(errorMessage ?: "Registration failed"))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -67,11 +74,35 @@ class AuthRepository @Inject constructor(
                 
                 Result.success(authData)
             } else {
-                val errorMessage = response.body()?.message ?: "Login failed"
-                Result.failure(Exception(errorMessage))
+                // 优先从 response body 获取错误信息
+                var errorMessage = response.body()?.error ?: response.body()?.message
+                
+                // 如果 body 为空，尝试从 errorBody 解析
+                if (errorMessage == null) {
+                    errorMessage = parseErrorBody(response.errorBody()?.string())
+                }
+                
+                Result.failure(Exception(errorMessage ?: "Login failed"))
             }
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+    
+    /**
+     * 解析错误响应体，提取错误信息
+     */
+    private fun parseErrorBody(errorBody: String?): String? {
+        if (errorBody.isNullOrEmpty()) return null
+        
+        return try {
+            // 尝试解析 JSON 格式的错误响应
+            val gson = com.google.gson.Gson()
+            val errorResponse = gson.fromJson(errorBody, ErrorResponse::class.java)
+            errorResponse?.error ?: errorResponse?.message
+        } catch (e: Exception) {
+            // 如果解析失败，直接返回原始字符串（可能是纯文本错误）
+            errorBody.takeIf { it.length < 200 }
         }
     }
     
