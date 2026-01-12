@@ -16,6 +16,7 @@ interface ClipboardContentProcessor {
     
     /**
      * Maximum size limit for content this processor can handle (in bytes).
+     * This is the default limit, actual limit may come from system config.
      */
     val maxSizeLimit: Long
     
@@ -23,6 +24,18 @@ interface ClipboardContentProcessor {
      * Priority of this processor (higher values = higher priority).
      */
     val priority: Int
+    
+    /**
+     * Updates the max size limit from system configuration.
+     * @param newLimit The new size limit in bytes
+     */
+    fun updateMaxSizeLimit(newLimit: Long)
+    
+    /**
+     * Gets the current effective max size limit.
+     * @return The current max size limit in bytes
+     */
+    fun getEffectiveMaxSizeLimit(): Long
     
     /**
      * Checks if this processor can handle the given content.

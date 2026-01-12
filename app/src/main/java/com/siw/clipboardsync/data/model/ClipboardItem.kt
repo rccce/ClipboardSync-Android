@@ -53,7 +53,9 @@ data class ClipboardSyncResponse(
     @SerializedName("data")
     val data: ClipboardItem?,
     @SerializedName("message")
-    val message: String? = null
+    val message: String? = null,
+    @SerializedName("error")
+    val error: String? = null
 )
 
 data class ClipboardHistoryResponse(
@@ -62,7 +64,9 @@ data class ClipboardHistoryResponse(
     @SerializedName("data")
     val data: List<ClipboardItem>?,
     @SerializedName("message")
-    val message: String? = null
+    val message: String? = null,
+    @SerializedName("error")
+    val error: String? = null
 )
 
 data class ClipboardLatestResponse(
@@ -71,7 +75,9 @@ data class ClipboardLatestResponse(
     @SerializedName("data")
     val data: ClipboardItem?,
     @SerializedName("message")
-    val message: String? = null
+    val message: String? = null,
+    @SerializedName("error")
+    val error: String? = null
 )
 
 // WebSocket message types - Updated to match API specification

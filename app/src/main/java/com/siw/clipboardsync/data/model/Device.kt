@@ -33,7 +33,9 @@ data class DeviceResponse(
     @SerializedName("data")
     val data: List<Device>?,
     @SerializedName("message")
-    val message: String? = null
+    val message: String? = null,
+    @SerializedName("error")
+    val error: String? = null
 )
 
 data class DeviceRegistrationRequest(
@@ -55,5 +57,7 @@ data class DeviceRegistrationResponse(
     @SerializedName("data")
     val data: Device?,
     @SerializedName("message")
-    val message: String? = null
+    val message: String? = null,
+    @SerializedName("error")
+    val error: String? = null
 )

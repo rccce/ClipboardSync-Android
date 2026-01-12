@@ -44,6 +44,8 @@ class MainViewModel @Inject constructor(
     init {
         loadInitialData()
         checkServiceStatus()
+        // Preload system config to ensure file size limits are available
+        preloadSystemConfig()
         // Initialize ClipboardSyncManager first, then start observing
         initializeAndObserveClipboardSync()
         // Initialize and observe advanced monitoring
@@ -115,6 +117,27 @@ class MainViewModel @Inject constructor(
                 hasRequiredPermissions = hasPermissions,
                 missingPermissions = serviceManager.getMissingPermissions()
             )
+        }
+    }
+    
+    /**
+     * Preload system config from server to ensure file size limits are available
+     * before any file operations. This prevents using default values.
+     */
+    private fun preloadSystemConfig() {
+        viewModelScope.launch {
+            try {
+                android.util.Log.d("MainViewModel", "Preloading system config...")
+                val result = systemConfigManager.refreshConfig()
+                if (result.isSuccess) {
+                    val config = result.getOrNull()
+                    android.util.Log.d("MainViewModel", "System config preloaded: maxFileSize=${config?.maxFileSize?.div(1024)?.div(1024)}MB")
+                } else {
+                    android.util.Log.w("MainViewModel", "Failed to preload system config: ${result.exceptionOrNull()?.message}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Error preloading system config", e)
+            }
         }
     }
     

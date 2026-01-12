@@ -3,6 +3,7 @@ package com.siw.clipboardsync.data.repository
 import com.siw.clipboardsync.data.model.ClipboardItem
 import com.siw.clipboardsync.data.model.ClipboardSyncRequest
 import com.siw.clipboardsync.data.network.ApiService
+import com.siw.clipboardsync.utils.ApiErrorParser
 import com.siw.clipboardsync.utils.DeviceUtils
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,7 +32,11 @@ class ClipboardRepository @Inject constructor(
                 val clipboardItem = response.body()!!.data!!
                 Result.success(clipboardItem)
             } else {
-                val errorMessage = response.body()?.message ?: "Sync failed"
+                val errorMessage = if (response.isSuccessful) {
+                    response.body()?.error ?: response.body()?.message ?: "同步失败"
+                } else {
+                    ApiErrorParser.parseError(response, "同步失败")
+                }
                 Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
@@ -47,7 +52,11 @@ class ClipboardRepository @Inject constructor(
                 val clipboardItem = response.body()!!.data
                 Result.success(clipboardItem)
             } else {
-                val errorMessage = response.body()?.message ?: "Failed to get latest clipboard"
+                val errorMessage = if (response.isSuccessful) {
+                    response.body()?.error ?: response.body()?.message ?: "获取最新剪贴板失败"
+                } else {
+                    ApiErrorParser.parseError(response, "获取最新剪贴板失败")
+                }
                 Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
@@ -63,7 +72,11 @@ class ClipboardRepository @Inject constructor(
                 val history = response.body()!!.data ?: emptyList()
                 Result.success(history)
             } else {
-                val errorMessage = response.body()?.message ?: "Failed to get clipboard history"
+                val errorMessage = if (response.isSuccessful) {
+                    response.body()?.error ?: response.body()?.message ?: "获取剪贴板历史失败"
+                } else {
+                    ApiErrorParser.parseError(response, "获取剪贴板历史失败")
+                }
                 Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
@@ -78,7 +91,8 @@ class ClipboardRepository @Inject constructor(
             if (response.isSuccessful) {
                 Result.success(Unit)
             } else {
-                Result.failure(Exception("Failed to delete clipboard item"))
+                val errorMessage = ApiErrorParser.parseError(response, "删除剪贴板项失败")
+                Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
             Result.failure(e)

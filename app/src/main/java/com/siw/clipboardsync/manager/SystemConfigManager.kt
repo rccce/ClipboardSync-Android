@@ -30,11 +30,31 @@ class SystemConfigManager @Inject constructor(
         private const val KEY_LAST_FETCH = "last_fetch_time"
         private const val CACHE_DURATION_MS = 30 * 60 * 1000L // 30分钟
         
-        // 默认配置值
-        private const val DEFAULT_MAX_FILE_SIZE = 10L * 1024 * 1024 // 10MB
+        // 默认配置值 - 服务器配置优先，这只是备用默认值
+        private const val DEFAULT_MAX_FILE_SIZE = 10L * 1024 * 1024 // 10MB default
         private val DEFAULT_ALLOWED_FILE_TYPES = listOf(
-            "image/jpeg", "image/png", "image/gif", "image/bmp", "image/webp",
-            "text/plain", "application/pdf"
+            // 图片类型
+            "image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/svg+xml",
+            // 文本类型
+            "text/plain", "text/markdown", "text/html", "text/css", "text/csv", "text/xml",
+            // 文档类型
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            // 代码/配置文件
+            "application/json", "application/javascript", "application/x-yaml",
+            // 压缩文件
+            "application/zip", "application/x-rar-compressed", "application/x-7z-compressed", "application/gzip",
+            // 音频类型
+            "audio/mpeg", "audio/wav", "audio/ogg", "audio/flac", "audio/aac",
+            // 视频类型
+            "video/mp4", "video/webm", "video/x-msvideo", "video/quicktime",
+            // 安装包
+            "application/vnd.android.package-archive"
         )
     }
     
@@ -57,6 +77,7 @@ class SystemConfigManager @Inject constructor(
             // 检查内存缓存
             cachedConfig?.let { config ->
                 if (!isCacheExpired()) {
+                    Log.d(TAG, "Using cached config: maxFileSize=${config.maxFileSize} bytes (${config.maxFileSize / 1024 / 1024}MB)")
                     return@withLock config
                 }
             }
@@ -65,6 +86,7 @@ class SystemConfigManager @Inject constructor(
             try {
                 val config = fetchConfigFromServer()
                 if (config != null) {
+                    Log.d(TAG, "Fetched config from server: maxFileSize=${config.maxFileSize} bytes (${config.maxFileSize / 1024 / 1024}MB)")
                     cacheConfig(config)
                     return@withLock config
                 }
@@ -74,11 +96,13 @@ class SystemConfigManager @Inject constructor(
             
             // 尝试从本地缓存加载
             loadCachedConfig()?.let { config ->
+                Log.d(TAG, "Using local cached config: maxFileSize=${config.maxFileSize} bytes (${config.maxFileSize / 1024 / 1024}MB)")
                 cachedConfig = config
                 return@withLock config
             }
             
             // 返回默认配置
+            Log.w(TAG, "Using default config: maxFileSize=$DEFAULT_MAX_FILE_SIZE bytes (${DEFAULT_MAX_FILE_SIZE / 1024 / 1024}MB)")
             getDefaultConfig()
         }
     }
@@ -143,7 +167,12 @@ class SystemConfigManager @Inject constructor(
     /**
      * 获取缓存的最大文件大小（同步方法）
      */
-    fun getCachedMaxFileSize(): Long = getCachedConfig()?.maxFileSize ?: DEFAULT_MAX_FILE_SIZE
+    fun getCachedMaxFileSize(): Long {
+        val config = getCachedConfig()
+        val maxSize = config?.maxFileSize ?: DEFAULT_MAX_FILE_SIZE
+        Log.d(TAG, "getCachedMaxFileSize: ${maxSize} bytes (${maxSize / 1024 / 1024}MB), hasConfig=${config != null}")
+        return maxSize
+    }
     
     /**
      * 获取缓存的允许文件类型（同步方法）
@@ -156,9 +185,16 @@ class SystemConfigManager @Inject constructor(
             try {
                 val response = apiService.getSystemConfig()
                 if (response.isSuccessful) {
-                    response.body()
+                    val apiResponse = response.body()
+                    if (apiResponse?.success == true && apiResponse.data != null) {
+                        Log.d(TAG, "Successfully fetched config from server: maxFileSize=${apiResponse.data.maxFileSize} bytes (${apiResponse.data.maxFileSize / 1024 / 1024}MB)")
+                        apiResponse.data
+                    } else {
+                        Log.e(TAG, "Server returned unsuccessful response: success=${apiResponse?.success}, error=${apiResponse?.error}")
+                        null
+                    }
                 } else {
-                    Log.e(TAG, "Server returned error: ${response.code()}")
+                    Log.e(TAG, "Server returned HTTP error: ${response.code()} - ${response.message()}")
                     null
                 }
             } catch (e: Exception) {

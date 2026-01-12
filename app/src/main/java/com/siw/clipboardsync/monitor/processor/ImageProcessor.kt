@@ -16,10 +16,15 @@ import java.io.IOException
 class ImageProcessor : ClipboardContentProcessor {
     
     override val supportedType: ClipboardContent.ContentType = ClipboardContent.ContentType.IMAGE
-    override val maxSizeLimit: Long = 10 * 1024 * 1024 // 10MB for images
+    override val maxSizeLimit: Long = DEFAULT_MAX_SIZE // Default, can be overridden by system config
     override val priority: Int = ContentTypeDetector.getPriority(supportedType)
     
+    // Dynamic size limit from system config
+    @Volatile
+    private var configuredMaxSize: Long = DEFAULT_MAX_SIZE
+    
     companion object {
+        private const val DEFAULT_MAX_SIZE = 10 * 1024 * 1024L // 10MB default for images (will be overridden by system config)
         private const val MAX_IMAGE_DIMENSION = 4096 // Max width/height in pixels
         private const val COMPRESSION_QUALITY = 85 // JPEG compression quality
         private const val THUMBNAIL_SIZE = 256 // Thumbnail dimension
@@ -32,6 +37,14 @@ class ImageProcessor : ClipboardContentProcessor {
         private val BMP_SIGNATURE = byteArrayOf(0x42, 0x4D)
         private val WEBP_SIGNATURE = byteArrayOf(0x52, 0x49, 0x46, 0x46)
     }
+    
+    override fun updateMaxSizeLimit(newLimit: Long) {
+        if (newLimit > 0) {
+            configuredMaxSize = newLimit
+        }
+    }
+    
+    override fun getEffectiveMaxSizeLimit(): Long = configuredMaxSize
     
     override fun canProcess(content: ClipboardContent): Boolean {
         return content.type == ClipboardContent.ContentType.IMAGE ||
@@ -70,7 +83,7 @@ class ImageProcessor : ClipboardContentProcessor {
                 
             } catch (e: OutOfMemoryError) {
                 ProcessingResult.Failure(
-                    ClipboardError.ContentTooLarge(content.size, maxSizeLimit),
+                    ClipboardError.ContentTooLarge(content.size, getEffectiveMaxSizeLimit()),
                     content
                 )
             } catch (e: Exception) {
@@ -83,9 +96,10 @@ class ImageProcessor : ClipboardContentProcessor {
     }
     
     override fun validate(content: ClipboardContent): ValidationResult {
-        // Check size limits
-        if (content.size > maxSizeLimit) {
-            return ValidationResult.SizeExceeded(content.size, maxSizeLimit)
+        // Check size limits using effective (configured) max size
+        val effectiveMaxSize = getEffectiveMaxSizeLimit()
+        if (content.size > effectiveMaxSize) {
+            return ValidationResult.SizeExceeded(content.size, effectiveMaxSize)
         }
         
         // Check if content is actually an image

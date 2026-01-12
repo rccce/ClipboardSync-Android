@@ -13,15 +13,28 @@ import java.nio.charset.StandardCharsets
 class TextProcessor : ClipboardContentProcessor {
     
     override val supportedType: ClipboardContent.ContentType = ClipboardContent.ContentType.TEXT
-    override val maxSizeLimit: Long = 1024 * 1024 // 1MB for text content
+    override val maxSizeLimit: Long = DEFAULT_MAX_SIZE // Default, can be overridden by system config
     override val priority: Int = ContentTypeDetector.getPriority(supportedType)
     
+    // Dynamic size limit from system config
+    @Volatile
+    private var configuredMaxSize: Long = DEFAULT_MAX_SIZE
+    
     companion object {
+        private const val DEFAULT_MAX_SIZE = 1024 * 1024L // 1MB default for text content
         private const val MAX_TEXT_LENGTH = 500_000 // 500K characters
         private const val ENCODING_UTF8 = "UTF-8"
         private const val ENCODING_UTF16 = "UTF-16"
         private const val ENCODING_ASCII = "ASCII"
     }
+    
+    override fun updateMaxSizeLimit(newLimit: Long) {
+        if (newLimit > 0) {
+            configuredMaxSize = newLimit
+        }
+    }
+    
+    override fun getEffectiveMaxSizeLimit(): Long = configuredMaxSize
     
     override fun canProcess(content: ClipboardContent): Boolean {
         return content.type == ClipboardContent.ContentType.TEXT ||
@@ -69,9 +82,10 @@ class TextProcessor : ClipboardContentProcessor {
     }
     
     override fun validate(content: ClipboardContent): ValidationResult {
-        // Check size limits
-        if (content.size > maxSizeLimit) {
-            return ValidationResult.SizeExceeded(content.size, maxSizeLimit)
+        // Check size limits using effective (configured) max size
+        val effectiveMaxSize = getEffectiveMaxSizeLimit()
+        if (content.size > effectiveMaxSize) {
+            return ValidationResult.SizeExceeded(content.size, effectiveMaxSize)
         }
         
         // Check if content is actually text

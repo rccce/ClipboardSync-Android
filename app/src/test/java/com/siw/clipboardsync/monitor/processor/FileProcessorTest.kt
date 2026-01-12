@@ -205,7 +205,14 @@ class FileProcessorTest {
     
     @Test
     fun `test maxSizeLimit is set correctly`() {
-        assertEquals(100 * 1024 * 1024L, fileProcessor.maxSizeLimit) // 100MB
+        assertEquals(100 * 1024 * 1024L, fileProcessor.getEffectiveMaxSizeLimit()) // 100MB default
+    }
+    
+    @Test
+    fun `test updateMaxSizeLimit updates effective limit`() {
+        val newLimit = 50 * 1024 * 1024L // 50MB
+        fileProcessor.updateMaxSizeLimit(newLimit)
+        assertEquals(newLimit, fileProcessor.getEffectiveMaxSizeLimit())
     }
     
     @Test

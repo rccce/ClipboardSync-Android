@@ -2,6 +2,7 @@ package com.siw.clipboardsync.monitor.processor
 
 import android.content.Context
 import android.util.Log
+import com.siw.clipboardsync.manager.SystemConfigManager
 import com.siw.clipboardsync.monitor.model.ClipboardContent
 import com.siw.clipboardsync.monitor.model.ClipboardError
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +18,10 @@ import java.util.concurrent.atomic.AtomicLong
  * 
  * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
  */
-class ClipboardProcessorManager(private val context: Context) {
+class ClipboardProcessorManager(
+    private val context: Context,
+    private val systemConfigManager: SystemConfigManager? = null
+) {
     
     private val processors: List<ClipboardContentProcessor> = listOf(
         TextProcessor(),
@@ -38,7 +42,38 @@ class ClipboardProcessorManager(private val context: Context) {
     
     companion object {
         private const val TAG = "ClipboardProcessorManager"
-        private const val DEFAULT_MAX_SIZE = 10 * 1024 * 1024L // 10MB default limit
+        private const val DEFAULT_MAX_SIZE = 10 * 1024 * 1024L // 10MB default limit (will be overridden by system config)
+    }
+    
+    /**
+     * Updates all processors with the max file size from system config.
+     * Should be called when config is loaded or refreshed.
+     */
+    suspend fun updateProcessorLimits() {
+        systemConfigManager?.let { configManager ->
+            try {
+                val maxFileSize = configManager.getMaxFileSize()
+                Log.d(TAG, "Updating processor limits with maxFileSize: $maxFileSize bytes")
+                processors.forEach { processor ->
+                    processor.updateMaxSizeLimit(maxFileSize)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update processor limits from config", e)
+            }
+        }
+    }
+    
+    /**
+     * Updates processor limits synchronously using cached config.
+     */
+    fun updateProcessorLimitsSync() {
+        systemConfigManager?.let { configManager ->
+            val maxFileSize = configManager.getCachedMaxFileSize()
+            Log.d(TAG, "Updating processor limits (sync) with maxFileSize: $maxFileSize bytes")
+            processors.forEach { processor ->
+                processor.updateMaxSizeLimit(maxFileSize)
+            }
+        }
     }
     
     /**
@@ -48,6 +83,9 @@ class ClipboardProcessorManager(private val context: Context) {
      * @return ProcessingResult containing the processed content or error
      */
     suspend fun processContent(content: ClipboardContent): ProcessingResult {
+        // Update processor limits before processing
+        updateProcessorLimits()
+        
         return withContext(Dispatchers.IO) {
             try {
                 // Check debounce

@@ -3,6 +3,7 @@ package com.siw.clipboardsync.data.repository
 import com.siw.clipboardsync.data.model.Device
 import com.siw.clipboardsync.data.model.DeviceRegistrationRequest
 import com.siw.clipboardsync.data.network.ApiService
+import com.siw.clipboardsync.utils.ApiErrorParser
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,7 +27,11 @@ class DeviceRepository @Inject constructor(
                 val device = response.body()!!.data!!
                 Result.success(device)
             } else {
-                val errorMessage = response.body()?.message ?: "Device registration failed"
+                val errorMessage = if (response.isSuccessful) {
+                    response.body()?.error ?: response.body()?.message ?: "设备注册失败"
+                } else {
+                    ApiErrorParser.parseError(response, "设备注册失败")
+                }
                 Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
@@ -42,7 +47,11 @@ class DeviceRepository @Inject constructor(
                 val devices = response.body()!!.data ?: emptyList()
                 Result.success(devices)
             } else {
-                val errorMessage = response.body()?.message ?: "Failed to get devices"
+                val errorMessage = if (response.isSuccessful) {
+                    response.body()?.error ?: response.body()?.message ?: "获取设备列表失败"
+                } else {
+                    ApiErrorParser.parseError(response, "获取设备列表失败")
+                }
                 Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
@@ -57,7 +66,8 @@ class DeviceRepository @Inject constructor(
             if (response.isSuccessful) {
                 Result.success(Unit)
             } else {
-                Result.failure(Exception("Failed to remove device"))
+                val errorMessage = ApiErrorParser.parseError(response, "移除设备失败")
+                Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
             Result.failure(e)

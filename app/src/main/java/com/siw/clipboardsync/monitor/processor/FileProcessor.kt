@@ -22,10 +22,15 @@ import java.nio.charset.StandardCharsets
 class FileProcessor(private val context: Context) : ClipboardContentProcessor {
     
     override val supportedType: ClipboardContent.ContentType = ClipboardContent.ContentType.FILE
-    override val maxSizeLimit: Long = 100 * 1024 * 1024 // 100MB for files
+    override val maxSizeLimit: Long = DEFAULT_MAX_SIZE // Default, can be overridden by system config
     override val priority: Int = ContentTypeDetector.getPriority(supportedType)
     
+    // Dynamic size limit from system config
+    @Volatile
+    private var configuredMaxSize: Long = DEFAULT_MAX_SIZE
+    
     companion object {
+        private const val DEFAULT_MAX_SIZE = 100 * 1024 * 1024L // 100MB default for files
         private const val MAX_FILE_COUNT = 50 // Maximum number of files in a selection
         private const val MAX_PATH_LENGTH = 4096 // Maximum file path length
         
@@ -41,6 +46,14 @@ class FileProcessor(private val context: Context) : ClipboardContentProcessor {
             "mp3", "mp4", "avi", "mov", "wav", "flac", "mkv"
         )
     }
+    
+    override fun updateMaxSizeLimit(newLimit: Long) {
+        if (newLimit > 0) {
+            configuredMaxSize = newLimit
+        }
+    }
+    
+    override fun getEffectiveMaxSizeLimit(): Long = configuredMaxSize
     
     override fun canProcess(content: ClipboardContent): Boolean {
         return content.type == ClipboardContent.ContentType.FILE ||
@@ -98,9 +111,10 @@ class FileProcessor(private val context: Context) : ClipboardContentProcessor {
     }
     
     override fun validate(content: ClipboardContent): ValidationResult {
-        // Check size limits
-        if (content.size > maxSizeLimit) {
-            return ValidationResult.SizeExceeded(content.size, maxSizeLimit)
+        // Check size limits using effective (configured) max size
+        val effectiveMaxSize = getEffectiveMaxSizeLimit()
+        if (content.size > effectiveMaxSize) {
+            return ValidationResult.SizeExceeded(content.size, effectiveMaxSize)
         }
         
         // Check if content represents valid file/URI data

@@ -50,7 +50,7 @@ interface ApiService {
     
     // System configuration
     @GET("api/v1/system/config")
-    suspend fun getSystemConfig(): Response<SystemConfigResponse>
+    suspend fun getSystemConfig(): Response<SystemConfigApiResponse>
     
     // File upload
     @Multipart

@@ -127,12 +127,19 @@ class ImageProcessorTest {
         assertTrue(result is ProcessingResult.SizeExceeded)
         val sizeResult = result as ProcessingResult.SizeExceeded
         assertEquals(largeImageData.size.toLong(), sizeResult.actualSize)
-        assertEquals(imageProcessor.maxSizeLimit, sizeResult.maxSize)
+        assertEquals(imageProcessor.getEffectiveMaxSizeLimit(), sizeResult.maxSize)
     }
     
     @Test
     fun `test maxSizeLimit is set correctly`() {
-        assertEquals(10 * 1024 * 1024L, imageProcessor.maxSizeLimit) // 10MB
+        assertEquals(10 * 1024 * 1024L, imageProcessor.getEffectiveMaxSizeLimit()) // 10MB default
+    }
+    
+    @Test
+    fun `test updateMaxSizeLimit updates effective limit`() {
+        val newLimit = 20 * 1024 * 1024L // 20MB
+        imageProcessor.updateMaxSizeLimit(newLimit)
+        assertEquals(newLimit, imageProcessor.getEffectiveMaxSizeLimit())
     }
     
     @Test

@@ -11,6 +11,7 @@ import com.siw.clipboardsync.data.model.ClipboardItem
 import com.siw.clipboardsync.data.model.FileUploadResponse
 import com.siw.clipboardsync.data.model.FileSyncRequest
 import com.siw.clipboardsync.data.network.ApiService
+import com.siw.clipboardsync.utils.ApiErrorParser
 import com.siw.clipboardsync.utils.ChecksumUtils
 import com.siw.clipboardsync.utils.MimeTypeMapping
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -96,12 +97,12 @@ class FileRepository @Inject constructor(
                     Result.success(uploadResponse)
                 } else {
                     Log.e(TAG, "Upload response invalid: success=${apiResponse?.success}, data=${apiResponse?.data}")
-                    Result.failure(Exception("Invalid upload response"))
+                    Result.failure(Exception(apiResponse?.error ?: "上传响应无效"))
                 }
             } else {
-                val errorBody = response.errorBody()?.string()
-                Log.e(TAG, "Upload failed: ${response.code()} - $errorBody")
-                Result.failure(Exception("Upload failed: ${response.code()}"))
+                val errorMessage = ApiErrorParser.parseError(response, "文件上传失败")
+                Log.e(TAG, "Upload failed: ${response.code()} - $errorMessage")
+                Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error uploading file", e)
@@ -149,7 +150,7 @@ class FileRepository @Inject constructor(
                         lastException = Exception("Empty response body")
                     }
                 } else {
-                    lastException = Exception("Download failed: ${response.code()}")
+                    lastException = Exception(ApiErrorParser.parseError(response, "文件下载失败"))
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Download attempt ${attempt + 1} failed", e)
@@ -226,10 +227,12 @@ class FileRepository @Inject constructor(
                     Log.d(TAG, "File synced to clipboard: ${syncResponse.data.id}")
                     Result.success(syncResponse.data)
                 } else {
-                    Result.failure(Exception(syncResponse?.message ?: "Sync failed"))
+                    Result.failure(Exception(syncResponse?.error ?: syncResponse?.message ?: "同步失败"))
                 }
             } else {
-                Result.failure(Exception("Sync failed: ${response.code()}"))
+                val errorMessage = ApiErrorParser.parseError(response, "文件同步失败")
+                Log.e(TAG, "Sync failed: ${response.code()} - $errorMessage")
+                Result.failure(Exception(errorMessage))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error syncing file to clipboard", e)

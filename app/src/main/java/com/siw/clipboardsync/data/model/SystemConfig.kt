@@ -3,6 +3,20 @@ package com.siw.clipboardsync.data.model
 import com.google.gson.annotations.SerializedName
 
 /**
+ * 系统配置 API 响应包装
+ */
+data class SystemConfigApiResponse(
+    @SerializedName("success")
+    val success: Boolean = false,
+    
+    @SerializedName("data")
+    val data: SystemConfigResponse? = null,
+    
+    @SerializedName("error")
+    val error: String? = null
+)
+
+/**
  * 系统配置响应
  */
 data class SystemConfigResponse(
@@ -16,15 +30,35 @@ data class SystemConfigResponse(
     val adminEmail: String = "",
     
     @SerializedName("max_file_size")
-    val maxFileSize: Long = 10 * 1024 * 1024, // 默认10MB
+    val maxFileSize: Long = 10 * 1024 * 1024, // 默认10MB (服务器配置优先)
     
     @SerializedName("file_retention_days")
     val fileRetentionDays: Int = 30,
     
     @SerializedName("allowed_file_types")
     val allowedFileTypes: List<String> = listOf(
-        "image/jpeg", "image/png", "image/gif", "image/bmp", "image/webp",
-        "text/plain", "application/pdf"
+        // 图片类型
+        "image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/svg+xml",
+        // 文本类型
+        "text/plain", "text/markdown", "text/html", "text/css", "text/csv", "text/xml",
+        // 文档类型
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        // 代码/配置文件
+        "application/json", "application/javascript", "application/x-yaml",
+        // 压缩文件
+        "application/zip", "application/x-rar-compressed", "application/x-7z-compressed", "application/gzip",
+        // 音频类型
+        "audio/mpeg", "audio/wav", "audio/ogg", "audio/flac", "audio/aac",
+        // 视频类型
+        "video/mp4", "video/webm", "video/x-msvideo", "video/quicktime",
+        // 安装包
+        "application/vnd.android.package-archive"
     ),
     
     @SerializedName("enable_registration")
@@ -54,7 +88,10 @@ data class FileUploadApiResponse(
     val success: Boolean,
     
     @SerializedName("data")
-    val data: FileUploadData?
+    val data: FileUploadData?,
+    
+    @SerializedName("error")
+    val error: String? = null
 )
 
 /**
