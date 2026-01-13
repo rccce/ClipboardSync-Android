@@ -60,9 +60,14 @@ class JWTParser {
          * 检查Token是否已过期
          * @param token JWT Token字符串
          * @return true如果Token已过期或无效
+         * 注意：如果token没有exp字段（永不过期），返回false
          */
         fun isTokenExpired(token: String): Boolean {
             val tokenInfo = parseToken(token) ?: return true
+            // 如果expirationTime是1970年（epoch），说明token没有exp字段，视为永不过期
+            if (tokenInfo.expirationTime.time == 0L) {
+                return false
+            }
             return Date() >= tokenInfo.expirationTime
         }
         
@@ -71,10 +76,15 @@ class JWTParser {
          * @param token JWT Token字符串
          * @param minutesBefore 提前多少分钟算作即将过期，默认5分钟
          * @return true如果Token即将过期
+         * 注意：如果token没有exp字段（永不过期），返回false
          */
         fun isTokenNearExpiry(token: String, minutesBefore: Int = 5): Boolean {
             val tokenInfo = parseToken(token) ?: return true
             val expiryTime = tokenInfo.expirationTime.time
+            // 如果expirationTime是1970年（epoch），说明token没有exp字段，视为永不过期
+            if (expiryTime == 0L) {
+                return false
+            }
             val currentTime = System.currentTimeMillis()
             val timeUntilExpiry = expiryTime - currentTime
             return timeUntilExpiry > 0 && timeUntilExpiry <= minutesBefore * 60 * 1000
