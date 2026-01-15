@@ -90,15 +90,12 @@ class ShizukuClipboardMonitor(
         }
     }
     
-    // Shizuku binder dead listener
+    // Shizuku binder dead listener - with auto-recovery
     private val shizukuBinderDeadListener = Shizuku.OnBinderDeadListener {
-        Log.w(TAG, "Shizuku binder dead")
+        Log.w(TAG, "Shizuku binder dead - will attempt recovery when binder is received again")
         monitoringJob?.cancel()
-        monitorScope.launch {
-            clipboardListener?.onMonitoringError(
-                ClipboardError.ServiceDisconnected("Shizuku", Exception("Shizuku service died"))
-            )
-        }
+        // Don't emit error immediately - wait for binder to come back
+        // The shizukuBinderReceivedListener will restart monitoring automatically
     }
     
     init {

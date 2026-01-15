@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- LSPosed scope: which packages this module should hook -->
+    <!-- LSPosed scope: only hook system framework -->
     <string-array name="xposed_scope">
         <item>android</item>
     </string-array>

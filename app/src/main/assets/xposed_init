@@ -1,1 +1,2 @@
 com.siw.clipboardsync.monitor.xposed.ClipboardHookEntry
+com.siw.clipboardsync.monitor.xposed.KeepAliveHook

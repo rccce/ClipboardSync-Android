@@ -30,9 +30,9 @@ class WebSocketClient @Inject constructor(
     companion object {
         private const val TAG = "WebSocketClient"
         private const val RECONNECT_DELAY_MS = 5000L
-        private const val HEARTBEAT_INTERVAL_MS = 30000L
-        private const val MAX_RECONNECT_ATTEMPTS = 5
-        private const val ENABLE_HEARTBEAT = false // Temporarily disable to test connection
+        private const val HEARTBEAT_INTERVAL_MS = 25000L // Reduced to stay within typical NAT timeout
+        private const val MAX_RECONNECT_ATTEMPTS = Int.MAX_VALUE // Keep trying to reconnect
+        private const val ENABLE_HEARTBEAT = true // Enable heartbeat to keep connection alive
     }
     
     private var webSocketClient: WebSocketClient? = null
@@ -479,22 +479,19 @@ class WebSocketClient @Inject constructor(
     }
     
     /**
-     * Schedule reconnection attempt
+     * Schedule reconnection attempt with exponential backoff
      */
     private fun scheduleReconnect() {
-        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            Log.w(TAG, "Max reconnect attempts reached")
-            _connectionStatus.tryEmit(ConnectionStatus.FAILED)
-            return
-        }
-        
         reconnectAttempts++
         _connectionStatus.tryEmit(ConnectionStatus.RECONNECTING)
         
-        Log.d(TAG, "Scheduling reconnect attempt $reconnectAttempts in ${RECONNECT_DELAY_MS}ms")
+        // Exponential backoff: 5s, 10s, 20s, 40s, max 60s
+        val backoffDelay = minOf(RECONNECT_DELAY_MS * (1L shl minOf(reconnectAttempts - 1, 4)), 60000L)
+        
+        Log.d(TAG, "Scheduling reconnect attempt $reconnectAttempts in ${backoffDelay}ms")
         
         scope.launch {
-            delay(RECONNECT_DELAY_MS)
+            delay(backoffDelay)
             
             // 在重连前尝试获取最新token
             val latestToken = try {
@@ -509,6 +506,10 @@ class WebSocketClient @Inject constructor(
             
             if (accessToken != null && userId != null && deviceId != null) {
                 connect(accessToken!!, userId!!, deviceId!!)
+            } else {
+                Log.w(TAG, "Cannot reconnect - missing credentials, will retry later")
+                // Schedule another attempt even if credentials are missing
+                scheduleReconnect()
             }
         }
     }

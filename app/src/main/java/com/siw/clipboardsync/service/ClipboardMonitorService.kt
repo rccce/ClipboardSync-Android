@@ -1,9 +1,15 @@
 package com.siw.clipboardsync.service
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -48,6 +54,10 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     private lateinit var clipboardManager: ClipboardManager
+    
+    // Network connectivity monitoring
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastClipboardHash: String? = null
     private var isMonitoring = false
     private var deviceId: String? = null
@@ -57,6 +67,10 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     private var currentMonitoringMethod: MonitoringMethod? = null
     private var initializationJob: Job? = null
     private var isInitialized = false
+    
+    // Keep-alive helpers
+    private var keepAliveManager: KeepAliveManager? = null
+    private var shizukuKeepAliveHelper: ShizukuKeepAliveHelper? = null
     
     companion object {
         const val NOTIFICATION_ID = 1001
@@ -102,6 +116,12 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
         // Register for app lifecycle changes
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         
+        // Setup network connectivity monitoring for auto-reconnect
+        setupNetworkMonitoring()
+        
+        // Initialize keep-alive mechanisms
+        initializeKeepAlive()
+        
         // Initialize clipboard sync manager
         Log.d(TAG, "Initializing ClipboardSyncManager for Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         initializationJob = serviceScope.launch {
@@ -136,8 +156,132 @@ class ClipboardMonitorService : Service(), DefaultLifecycleObserver {
     override fun onDestroy() {
         super<Service>.onDestroy()
         ProcessLifecycleOwner.get().lifecycle.removeObserver(this)
+        
+        // Cleanup network monitoring
+        cleanupNetworkMonitoring()
+        
+        // Cleanup keep-alive
+        cleanupKeepAlive()
+        
         clipboardSyncManager.cleanup()
         serviceScope.cancel()
+    }
+    
+    /**
+     * Initialize keep-alive mechanisms based on available capabilities
+     */
+    private fun initializeKeepAlive() {
+        try {
+            Log.d(TAG, "Initializing keep-alive mechanisms")
+            
+            // Initialize KeepAliveManager
+            keepAliveManager = KeepAliveManager.getInstance(this)
+            keepAliveManager?.startKeepAlive()
+            
+            // Initialize Shizuku keep-alive if available
+            serviceScope.launch {
+                try {
+                    shizukuKeepAliveHelper = ShizukuKeepAliveHelper(this@ClipboardMonitorService)
+                    if (shizukuKeepAliveHelper?.isShizukuAvailable() == true &&
+                        shizukuKeepAliveHelper?.hasShizukuPermission() == true) {
+                        
+                        val success = shizukuKeepAliveHelper?.initialize() ?: false
+                        if (success) {
+                            shizukuKeepAliveHelper?.startPeriodicRefresh()
+                            Log.i(TAG, "Shizuku keep-alive initialized")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Shizuku keep-alive not available", e)
+                }
+            }
+            
+            Log.d(TAG, "Keep-alive mechanisms initialized")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize keep-alive", e)
+        }
+    }
+    
+    /**
+     * Cleanup keep-alive resources
+     */
+    private fun cleanupKeepAlive() {
+        try {
+            shizukuKeepAliveHelper?.cleanup()
+            shizukuKeepAliveHelper = null
+            // Note: Don't stop KeepAliveManager here as it should continue running
+            Log.d(TAG, "Keep-alive cleaned up")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error cleaning up keep-alive", e)
+        }
+    }
+    
+    /**
+     * Setup network connectivity monitoring to auto-reconnect WebSocket when network becomes available
+     */
+    private fun setupNetworkMonitoring() {
+        try {
+            connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            
+            networkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    Log.i(TAG, "Network became available, triggering WebSocket reconnect")
+                    serviceScope.launch {
+                        delay(1000) // Small delay to let network stabilize
+                        clipboardSyncManager.reconnectIfNeeded()
+                        // Update notification after reconnect attempt
+                        delay(500)
+                        updateNotificationForMethod(currentMonitoringMethod)
+                    }
+                }
+                
+                override fun onLost(network: Network) {
+                    Log.w(TAG, "Network lost")
+                    updateNotification("网络断开，等待重连...")
+                }
+                
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                    val hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    val isValidated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    Log.d(TAG, "Network capabilities changed: hasInternet=$hasInternet, isValidated=$isValidated")
+                    
+                    if (hasInternet && isValidated) {
+                        serviceScope.launch {
+                            clipboardSyncManager.reconnectIfNeeded()
+                            // Update notification after reconnect
+                            delay(500)
+                            updateNotificationForMethod(currentMonitoringMethod)
+                        }
+                    }
+                }
+            }
+            
+            val networkRequest = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            
+            connectivityManager?.registerNetworkCallback(networkRequest, networkCallback!!)
+            Log.d(TAG, "Network monitoring setup completed")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to setup network monitoring", e)
+        }
+    }
+    
+    /**
+     * Cleanup network monitoring resources
+     */
+    private fun cleanupNetworkMonitoring() {
+        try {
+            networkCallback?.let { callback ->
+                connectivityManager?.unregisterNetworkCallback(callback)
+            }
+            networkCallback = null
+            connectivityManager = null
+            Log.d(TAG, "Network monitoring cleaned up")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error cleaning up network monitoring", e)
+        }
     }
     
     // Track if we've done the first foreground initialization
