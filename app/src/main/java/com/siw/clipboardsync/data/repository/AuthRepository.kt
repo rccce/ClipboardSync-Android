@@ -53,14 +53,16 @@ class AuthRepository @Inject constructor(
         }
     }
     
-    suspend fun login(email: String, password: String, deviceId: String, deviceName: String): Result<AuthData> {
+    suspend fun login(email: String, password: String, deviceId: String, deviceName: String, osVersion: String, appVersion: String): Result<AuthData> {
         return try {
             val request = LoginRequest(
                 email = email,
                 password = password,
                 deviceId = deviceId,
                 deviceName = deviceName,
-                deviceType = DeviceUtils.getDeviceType()
+                deviceType = DeviceUtils.getDeviceType(),
+                osVersion = osVersion,
+                appVersion = appVersion
             )
             val response = apiService.login(request)
             

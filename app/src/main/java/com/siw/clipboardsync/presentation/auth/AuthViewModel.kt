@@ -36,10 +36,10 @@ class AuthViewModel @Inject constructor(
                 val osVersion = DeviceUtils.getOsVersion()
                 val appVersion = DeviceUtils.getAppVersion(context)
                 
-                val result = authRepository.login(email, password, deviceId, deviceName)
+                val result = authRepository.login(email, password, deviceId, deviceName, osVersion, appVersion)
                 
                 if (result.isSuccess) {
-                    // Register device after successful login
+                    // Register device after successful login to ensure device info is up-to-date
                     deviceRepository.registerDevice(deviceId, deviceName, osVersion, appVersion)
                     _uiState.value = _uiState.value.copy(isLoading = false, isSuccess = true)
                 } else {

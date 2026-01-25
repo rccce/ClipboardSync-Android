@@ -43,7 +43,11 @@ data class LoginRequest(
     @SerializedName("device_name")
     val deviceName: String,
     @SerializedName("device_type")
-    val deviceType: String = "android"
+    val deviceType: String = "android",
+    @SerializedName("os_version")
+    val osVersion: String = "",
+    @SerializedName("app_version")
+    val appVersion: String = ""
 )
 
 data class RegisterRequest(
