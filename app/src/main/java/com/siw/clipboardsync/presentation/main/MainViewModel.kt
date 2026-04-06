@@ -278,6 +278,10 @@ class MainViewModel @Inject constructor(
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
     }
+
+    fun clearFileTransferState() {
+        fileSyncManager.resetTransferState()
+    }
     
     fun checkPermissions() {
         checkServiceStatus()

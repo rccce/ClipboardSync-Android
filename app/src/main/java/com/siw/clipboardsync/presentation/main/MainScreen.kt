@@ -32,6 +32,7 @@ fun MainScreen(
     viewModel: MainViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
     
     // Permission launcher for Android 13+
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -52,8 +53,31 @@ fun MainScreen(
         // When sync status changes, refresh the service status to keep UI in sync
         viewModel.refreshServiceStatus()
     }
+
+    LaunchedEffect(uiState.fileTransferState) {
+        when (val state = uiState.fileTransferState) {
+            is FileTransferState.Success -> {
+                snackbarHostState.showSnackbar(
+                    message = "下载完成: ${state.fileName}",
+                    duration = SnackbarDuration.Short
+                )
+                viewModel.clearFileTransferState()
+            }
+            is FileTransferState.Error -> {
+                snackbarHostState.showSnackbar(
+                    message = "下载失败: ${state.error}",
+                    duration = SnackbarDuration.Long
+                )
+                viewModel.clearFileTransferState()
+            }
+            else -> Unit
+        }
+    }
     
     Scaffold(
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState)
+        },
         topBar = {
             TopAppBar(
                 title = { 
