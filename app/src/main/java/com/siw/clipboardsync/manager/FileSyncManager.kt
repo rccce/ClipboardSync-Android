@@ -145,16 +145,16 @@ class FileSyncManager @Inject constructor(
      * @return 下载后的文件URI
      */
     suspend fun downloadFile(clipboardItem: ClipboardItem): Result<Uri> = withContext(Dispatchers.IO) {
-        val fileUrl = clipboardItem.fileUrl
         val fileName = clipboardItem.fileName ?: "downloaded_file"
+        val downloadUrl = resolveDownloadUrl(clipboardItem)
         
-        if (fileUrl.isNullOrEmpty()) {
-            _transferState.value = FileTransferState.Error(fileName, "文件URL为空")
-            return@withContext Result.failure(Exception("File URL is empty"))
+        if (downloadUrl == null) {
+            _transferState.value = FileTransferState.Error(fileName, "文件下载地址为空")
+            return@withContext Result.failure(Exception("Download URL is empty"))
         }
         
         try {
-            Log.d(TAG, "Downloading file: $fileName from $fileUrl")
+            Log.d(TAG, "Downloading file: $fileName from $downloadUrl")
             
             // 检查文件大小是否在限制内
             val fileSize = clipboardItem.fileSize ?: 0L
@@ -172,11 +172,11 @@ class FileSyncManager @Inject constructor(
             
             val checksum = clipboardItem.checksum
             val downloadResult = if (!checksum.isNullOrEmpty()) {
-                fileRepository.downloadFileWithChecksum(fileUrl, fileName, checksum) { progress ->
+                fileRepository.downloadFileWithChecksum(downloadUrl, fileName, checksum) { progress ->
                     _transferState.value = FileTransferState.Downloading(fileName, progress)
                 }
             } else {
-                fileRepository.downloadFile(fileUrl, fileName) { progress ->
+                fileRepository.downloadFile(downloadUrl, fileName) { progress ->
                     _transferState.value = FileTransferState.Downloading(fileName, progress)
                 }
             }
@@ -196,6 +196,22 @@ class FileSyncManager @Inject constructor(
             _transferState.value = FileTransferState.Error(fileName, e.message ?: "未知错误")
             Result.failure(e)
         }
+    }
+
+    private fun resolveDownloadUrl(clipboardItem: ClipboardItem): String? {
+        val rawFileUrl = clipboardItem.fileUrl?.trim().orEmpty()
+
+        if (rawFileUrl.isNotEmpty()) {
+            if (rawFileUrl.startsWith("http://") || rawFileUrl.startsWith("https://")) {
+                return rawFileUrl
+            }
+            if (rawFileUrl.startsWith("/api/") || rawFileUrl.startsWith("api/")) {
+                return rawFileUrl
+            }
+        }
+
+        // Backend download endpoint is /api/v1/files/{id}; fallback for object-key style file_url.
+        return clipboardItem.id.takeIf { it.isNotBlank() }?.let { "api/v1/files/$it" }
     }
     
     /**

@@ -529,7 +529,7 @@ private fun ClipboardHistoryItem(
                 // Action buttons
                 Row {
                     // Download button for file items
-                    if (isFile && !item.fileUrl.isNullOrEmpty()) {
+                    if (isFile) {
                         if (isDownloading) {
                             // Show progress indicator while downloading
                             CircularProgressIndicator(
