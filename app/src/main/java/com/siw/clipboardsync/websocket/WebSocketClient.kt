@@ -80,7 +80,7 @@ class WebSocketClient @Inject constructor(
     /**
      * Connect to WebSocket server
      */
-    fun connect(accessToken: String, userId: String, deviceId: String, baseUrl: String = "wss://clip.imiss.me") {
+    fun connect(accessToken: String, userId: String, deviceId: String, baseUrl: String = "wss://clip.blueer.de") {
         if (isConnecting || isConnected()) {
             Log.d(TAG, "Already connecting or connected")
             return
