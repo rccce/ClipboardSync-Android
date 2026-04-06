@@ -201,14 +201,14 @@ class FileSyncManager @Inject constructor(
     private fun resolveDownloadUrl(clipboardItem: ClipboardItem): String? {
         val rawFileUrl = clipboardItem.fileUrl?.trim().orEmpty()
 
-        // Only use direct URLs if they are complete presigned URLs (http/https)
-        if (rawFileUrl.startsWith("http://") || rawFileUrl.startsWith("https://")) {
-            Log.d(TAG, "Using presigned URL: $rawFileUrl")
+        // Presigned URLs (complete https URLs with auth params) can be used directly
+        if (rawFileUrl.startsWith("https://")) {
+            Log.d(TAG, "Using presigned URL directly: ${rawFileUrl.take(80)}...")
             return rawFileUrl
         }
 
-        // For all other cases (object keys, relative paths, empty), use backend proxy
-        // Backend proxy handles R2 authentication and avoids x-amz-content-sha256 errors
+        // For non-presigned URLs (object keys, relative paths), use backend proxy
+        // Backend proxy handles authentication and avoids direct R2 access
         return clipboardItem.id.takeIf { it.isNotBlank() }?.let { id ->
             Log.d(TAG, "Using backend proxy for download: api/v1/files/$id")
             "api/v1/files/$id"

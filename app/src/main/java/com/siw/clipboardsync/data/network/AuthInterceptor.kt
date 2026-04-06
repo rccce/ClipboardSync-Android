@@ -27,7 +27,8 @@ class AuthInterceptor @Inject constructor(
         if (url.contains("/auth/login") || 
             url.contains("/auth/register") || 
             url.contains("/auth/refresh") ||
-            url.contains("/health")) {
+            url.contains("/health") ||
+            url.contains("r2.cloudflarestorage.com")) {  // Skip presigned R2 URLs
             return chain.proceed(request)
         }
         
